@@ -19,10 +19,14 @@ def send_email(subject: str, body: str) -> None:
     msg["From"] = GMAIL_SENDER
     msg["To"] = REPORT_RECIPIENT
 
+    # Strip all whitespace — app passwords copied from Google often contain
+    # non-breaking spaces (\xa0) that break ASCII encoding in smtplib
+    clean_password = "".join(GMAIL_APP_PASSWORD.split())
+
     context = ssl.create_default_context()
     try:
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
-            server.login(GMAIL_SENDER, GMAIL_APP_PASSWORD)
+            server.login(GMAIL_SENDER, clean_password)
             server.sendmail(GMAIL_SENDER, REPORT_RECIPIENT, msg.as_string())
         logger.info("Report emailed to %s", REPORT_RECIPIENT)
     except smtplib.SMTPException as exc:

@@ -10,15 +10,14 @@ logger = logging.getLogger(__name__)
 
 
 def get_transcript(video_id: str) -> Optional[str]:
-    """Fetch auto-generated or manual captions and return clean plaintext."""
+    """Fetch manual or auto-generated captions and return clean plaintext."""
     try:
-        # Prefer manual English captions; fall back to auto-generated
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        api = YouTubeTranscriptApi()
+        transcript_list = api.list(video_id)
         try:
             transcript = transcript_list.find_manually_created_transcript(["en"])
         except NoTranscriptFound:
             transcript = transcript_list.find_generated_transcript(["en"])
-
         entries = transcript.fetch()
     except TranscriptsDisabled:
         logger.warning("Captions disabled for %s", video_id)
@@ -30,11 +29,10 @@ def get_transcript(video_id: str) -> Optional[str]:
         logger.error("Transcript fetch failed for %s: %s", video_id, exc)
         return None
 
-    # Join all caption chunks, collapsing duplicate consecutive lines
     lines: list[str] = []
     prev = ""
     for entry in entries:
-        text = re.sub(r"\s+", " ", entry["text"]).strip()
+        text = re.sub(r"\s+", " ", entry.text).strip()
         if text and text != prev:
             lines.append(text)
             prev = text

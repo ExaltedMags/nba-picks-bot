@@ -14,7 +14,7 @@ GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 REPORT_RECIPIENT = os.environ.get("REPORT_RECIPIENT")
 
 # Gemini model
-GEMINI_MODEL = "gemini-1.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # Timezone
 PHT = "Asia/Manila"

@@ -17,7 +17,7 @@ from config import (
     REPORT_RECIPIENT,
     YOUTUBE_API_KEY,
 )
-from fetch_video import daft_filter, ev_filter, fetch_latest_video
+from fetch_video import daft_filter, ev_filter, ev_score, fetch_latest_video
 from get_pinned_comment import get_pinned_comment_url
 from get_transcript import get_transcript
 from scrape_picks import scrape_picks_page
@@ -56,6 +56,7 @@ def _process_channel(
     channel_label: str,
     channel_name: str,
     filter_fn,
+    score_fn=None,
     allowed_domains=None,
 ) -> dict:
     """Run the full pipeline for one channel and return a result dict."""
@@ -69,7 +70,7 @@ def _process_channel(
         "error": None,
     }
 
-    video = fetch_latest_video(channel_id, filter_fn, channel_label)
+    video = fetch_latest_video(channel_id, filter_fn, channel_label, score_fn)
     if not video:
         result["error"] = "No qualifying video found for today."
         return result
@@ -151,6 +152,7 @@ def main() -> None:
         channel_label="EV",
         channel_name="EV (GuyBostonSports)",
         filter_fn=ev_filter,
+        score_fn=ev_score,
         allowed_domains=EV_PICKS_DOMAINS,
     )
 

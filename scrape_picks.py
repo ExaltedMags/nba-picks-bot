@@ -1,6 +1,7 @@
 """Scrape picks content from an external article URL."""
 
 import logging
+import time
 from typing import Optional
 
 import requests
@@ -15,6 +16,8 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     )
 }
+
+RETRY_DELAYS = [5, 15, 30]  # seconds between attempts on 429/5xx
 
 PICKS_KEYWORDS = {"pick", "bet", "prediction", "best bet", "best bets", "plays"}
 
@@ -39,11 +42,23 @@ def _list_to_text(lst: Tag) -> str:
 
 def scrape_picks_page(url: str) -> Optional[str]:
     """Return a plaintext picks block extracted from the article at url."""
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        logger.error("Failed to fetch picks page %s: %s", url, exc)
+    resp = None
+    for attempt, delay in enumerate([0] + RETRY_DELAYS):
+        if delay:
+            logger.info("Scrape attempt %d for %s, waiting %ds", attempt + 1, url, delay)
+            time.sleep(delay)
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=30)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                logger.warning("Got %d from %s, will retry", resp.status_code, url)
+                continue
+            resp.raise_for_status()
+            break
+        except requests.RequestException as exc:
+            logger.error("Failed to fetch picks page %s: %s", url, exc)
+            return None
+    else:
+        logger.error("All retries exhausted for %s (last status: %s)", url, resp.status_code if resp else "N/A")
         return None
 
     soup = BeautifulSoup(resp.text, "html.parser")

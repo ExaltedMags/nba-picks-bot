@@ -13,6 +13,12 @@ GMAIL_SENDER = os.environ.get("GMAIL_SENDER")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 REPORT_RECIPIENT = os.environ.get("REPORT_RECIPIENT")
 
+# Webshare proxy — required for transcript fetching on GitHub Actions
+# Free tier at https://www.webshare.io (10 proxies, no cost)
+# Leave unset to skip proxy (transcripts will fail on cloud runners)
+WEBSHARE_PROXY_USERNAME = os.environ.get("WEBSHARE_PROXY_USERNAME")
+WEBSHARE_PROXY_PASSWORD = os.environ.get("WEBSHARE_PROXY_PASSWORD")
+
 # Gemini model
 GEMINI_MODEL = "gemini-2.5-flash"
 

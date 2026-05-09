@@ -5,14 +5,28 @@ import re
 from typing import Optional
 
 from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled, YouTubeTranscriptApi
+from youtube_transcript_api.proxies import WebshareProxyConfig
+
+from config import WEBSHARE_PROXY_PASSWORD, WEBSHARE_PROXY_USERNAME
 
 logger = logging.getLogger(__name__)
+
+
+def _make_api() -> YouTubeTranscriptApi:
+    if WEBSHARE_PROXY_USERNAME and WEBSHARE_PROXY_PASSWORD:
+        return YouTubeTranscriptApi(
+            proxies=WebshareProxyConfig(
+                proxy_username=WEBSHARE_PROXY_USERNAME,
+                proxy_password=WEBSHARE_PROXY_PASSWORD,
+            )
+        )
+    return YouTubeTranscriptApi()
 
 
 def get_transcript(video_id: str) -> Optional[str]:
     """Fetch manual or auto-generated captions and return clean plaintext."""
     try:
-        api = YouTubeTranscriptApi()
+        api = _make_api()
         transcript_list = api.list(video_id)
         try:
             transcript = transcript_list.find_manually_created_transcript(["en"])

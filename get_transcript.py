@@ -1,76 +1,44 @@
-"""Extract and clean YouTube auto-captions via yt-dlp."""
+"""Extract and clean YouTube captions via youtube-transcript-api."""
 
 import logging
 import re
-import subprocess
-import tempfile
-from pathlib import Path
 from typing import Optional
+
+from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled, YouTubeTranscriptApi
 
 logger = logging.getLogger(__name__)
 
 
-def _clean_vtt(raw: str) -> str:
-    """Strip VTT timestamps and deduplicate overlapping caption lines."""
-    lines = []
-    seen = set()
-
-    # Remove the WEBVTT header block and cue identifiers
-    for line in raw.splitlines():
-        # Skip timestamp lines (e.g. "00:00:01.000 --> 00:00:04.000 ...")
-        if re.match(r"^\d{2}:\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}\.\d{3}", line):
-            continue
-        # Skip the WEBVTT header and NOTE blocks
-        if line.startswith("WEBVTT") or line.startswith("NOTE") or line.startswith("Kind:") or line.startswith("Language:"):
-            continue
-        # Strip inline VTT tags like <00:00:01.000><c>word</c>
-        line = re.sub(r"<[^>]+>", "", line).strip()
-        if not line:
-            continue
-        # Deduplicate consecutive repeated lines (VTT overlap artifact)
-        if line not in seen:
-            seen.add(line)
-            lines.append(line)
-        # Reset seen set every ~50 lines to allow legitimate repetition across the video
-        if len(seen) > 50:
-            seen.clear()
-
-    return " ".join(lines)
-
-
 def get_transcript(video_id: str) -> Optional[str]:
-    """Download auto-captions for video_id and return clean plaintext."""
-    url = f"https://www.youtube.com/watch?v={video_id}"
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        cmd = [
-            "yt-dlp",
-            "--write-auto-sub",
-            "--sub-lang", "en",
-            "--skip-download",
-            "--sub-format", "vtt",
-            "--output", f"{tmpdir}/%(id)s.%(ext)s",
-            "--no-playlist",
-            "--quiet",
-            url,
-        ]
+    """Fetch auto-generated or manual captions and return clean plaintext."""
+    try:
+        # Prefer manual English captions; fall back to auto-generated
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        except subprocess.TimeoutExpired:
-            logger.error("yt-dlp timed out for %s", video_id)
-            return None
-        except FileNotFoundError:
-            logger.error("yt-dlp not found in PATH")
-            return None
+            transcript = transcript_list.find_manually_created_transcript(["en"])
+        except NoTranscriptFound:
+            transcript = transcript_list.find_generated_transcript(["en"])
 
-        # Find the downloaded .vtt file
-        vtt_files = list(Path(tmpdir).glob("*.vtt"))
-        if not vtt_files:
-            logger.warning("No auto-captions found for %s. stderr: %s", video_id, result.stderr)
-            return None
+        entries = transcript.fetch()
+    except TranscriptsDisabled:
+        logger.warning("Captions disabled for %s", video_id)
+        return None
+    except NoTranscriptFound:
+        logger.warning("No English transcript found for %s", video_id)
+        return None
+    except Exception as exc:
+        logger.error("Transcript fetch failed for %s: %s", video_id, exc)
+        return None
 
-        raw = vtt_files[0].read_text(encoding="utf-8", errors="replace")
+    # Join all caption chunks, collapsing duplicate consecutive lines
+    lines: list[str] = []
+    prev = ""
+    for entry in entries:
+        text = re.sub(r"\s+", " ", entry["text"]).strip()
+        if text and text != prev:
+            lines.append(text)
+            prev = text
 
-    cleaned = _clean_vtt(raw)
+    cleaned = " ".join(lines)
     logger.info("Transcript extracted for %s (%d chars)", video_id, len(cleaned))
-    return cleaned if cleaned.strip() else None
+    return cleaned if cleaned else None

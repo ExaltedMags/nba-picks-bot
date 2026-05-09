@@ -11,16 +11,17 @@ from config import (
     EV_CHANNEL_ID,
     EV_PICKS_DOMAINS,
     GEMINI_API_KEY,
+    GMAIL_APP_PASSWORD,
+    GMAIL_SENDER,
     PHT,
-    TELEGRAM_BOT_TOKEN,
-    TELEGRAM_CHAT_ID,
+    REPORT_RECIPIENT,
     YOUTUBE_API_KEY,
 )
 from fetch_video import daft_filter, ev_filter, fetch_latest_video
 from get_pinned_comment import get_pinned_comment_url
 from get_transcript import get_transcript
 from scrape_picks import scrape_picks_page
-from send_telegram import send_telegram
+from send_email import send_email
 from summarize import summarize_with_gemini
 
 logging.basicConfig(
@@ -39,8 +40,9 @@ def _check_secrets() -> None:
         for name, val in [
             ("YOUTUBE_API_KEY", YOUTUBE_API_KEY),
             ("GEMINI_API_KEY", GEMINI_API_KEY),
-            ("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN),
-            ("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID),
+            ("GMAIL_SENDER", GMAIL_SENDER),
+            ("GMAIL_APP_PASSWORD", GMAIL_APP_PASSWORD),
+            ("REPORT_RECIPIENT", REPORT_RECIPIENT),
         ]
         if not val
     ]
@@ -122,18 +124,22 @@ def _format_channel_block(result: dict) -> str:
     return "\n".join(lines)
 
 
-def build_report(ev_result: dict, daft_result: dict) -> str:
+def build_report(ev_result: dict, daft_result: dict) -> tuple[str, str]:
+    """Return (subject, body) for the email."""
     pht_tz = pytz.timezone(PHT)
     now_pht = datetime.now(pht_tz)
     date_str = now_pht.strftime("%B %d, %Y")
     ts_str = now_pht.strftime("%Y-%m-%d %H:%M PHT")
 
+    subject = f"🏀 NBA Picks Report — {date_str}"
+
     header = f"🏀 NBA PICKS REPORT — {date_str}"
     ev_block = _format_channel_block(ev_result)
     daft_block = _format_channel_block(daft_result)
     footer = f"{DIVIDER}\n⏱ Generated {ts_str}"
+    body = "\n\n".join([header, ev_block, daft_block, footer])
 
-    return "\n\n".join([header, ev_block, daft_block, footer])
+    return subject, body
 
 
 def main() -> None:
@@ -156,11 +162,11 @@ def main() -> None:
         allowed_domains=None,
     )
 
-    report = build_report(ev_result, daft_result)
-    logger.info("Report built (%d chars)", len(report))
+    subject, body = build_report(ev_result, daft_result)
+    logger.info("Report built (%d chars)", len(body))
 
-    send_telegram(report)
-    logger.info("Report sent to Telegram")
+    send_email(subject, body)
+    logger.info("Report emailed to %s", REPORT_RECIPIENT)
 
 
 if __name__ == "__main__":

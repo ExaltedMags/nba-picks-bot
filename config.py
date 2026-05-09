@@ -7,8 +7,11 @@ DAFT_CHANNEL_ID = os.environ.get("DAFT_CHANNEL_ID", "UCxxxxxxxxxxxxxxxxxxxxxxxxx
 # API credentials from environment
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# Email delivery
+GMAIL_SENDER = os.environ.get("GMAIL_SENDER")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+REPORT_RECIPIENT = os.environ.get("REPORT_RECIPIENT")
 
 # Gemini model
 GEMINI_MODEL = "gemini-2.5-flash-preview-05-20"

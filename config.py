@@ -1,0 +1,33 @@
+import os
+
+# Channel IDs — update these after running the setup instructions in README.md
+EV_CHANNEL_ID = os.environ.get("EV_CHANNEL_ID", "UCxxxxxxxxxxxxxxxxxxxxxxxxxx")
+DAFT_CHANNEL_ID = os.environ.get("DAFT_CHANNEL_ID", "UCxxxxxxxxxxxxxxxxxxxxxxxxxx")
+
+# API credentials from environment
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# Gemini model
+GEMINI_MODEL = "gemini-2.5-flash-preview-05-20"
+
+# Timezone
+PHT = "Asia/Manila"
+
+# NBA team keywords for Ev's channel filter
+NBA_TEAM_NAMES = [
+    "Cavs", "Cavaliers", "Lakers", "Celtics", "Warriors", "Knicks",
+    "Nets", "Bulls", "Heat", "Bucks", "76ers", "Sixers", "Suns",
+    "Nuggets", "Clippers", "Mavericks", "Mavs", "Grizzlies", "Pelicans",
+    "Thunder", "Jazz", "Timberwolves", "Wolves", "Rockets", "Spurs",
+    "Kings", "Blazers", "Hornets", "Hawks", "Magic", "Pacers", "Pistons",
+    "Raptors", "Wizards",
+]
+
+# Sports to exclude for Ev's NBA filter
+EXCLUDE_SPORTS = ["NFL", "MLB", "CFB", "NCAAB", "Soccer", "NHL", "Tennis"]
+
+# Domains that indicate a valid picks article link in Ev's pinned comment
+EV_PICKS_DOMAINS = ["guybostonsports.com"]

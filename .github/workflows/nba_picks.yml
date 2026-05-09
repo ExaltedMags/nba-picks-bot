@@ -1,0 +1,32 @@
+name: NBA Picks Daily Report
+
+on:
+  schedule:
+    - cron: '0 16 * * *'  # 4:00 PM UTC = 12:00 AM PHT
+  workflow_dispatch:        # Manual trigger for testing
+
+jobs:
+  run-picks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install yt-dlp system dependency (ffmpeg)
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run picks automation
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EV_CHANNEL_ID: ${{ secrets.EV_CHANNEL_ID }}
+          DAFT_CHANNEL_ID: ${{ secrets.DAFT_CHANNEL_ID }}
+        run: python main.py

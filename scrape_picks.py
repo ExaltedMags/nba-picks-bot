@@ -7,6 +7,8 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup, Tag
 
+from config import WEBSHARE_PROXY_PASSWORD, WEBSHARE_PROXY_USERNAME
+
 logger = logging.getLogger(__name__)
 
 HEADERS = {
@@ -18,6 +20,13 @@ HEADERS = {
 }
 
 RETRY_DELAYS = [5, 15, 30]  # seconds between attempts on 429/5xx
+
+
+def _proxies() -> Optional[dict]:
+    if WEBSHARE_PROXY_USERNAME and WEBSHARE_PROXY_PASSWORD:
+        proxy_url = f"http://{WEBSHARE_PROXY_USERNAME}:{WEBSHARE_PROXY_PASSWORD}@p.webshare.io:80"
+        return {"http": proxy_url, "https": proxy_url}
+    return None
 
 PICKS_KEYWORDS = {"pick", "bet", "prediction", "best bet", "best bets", "plays"}
 
@@ -48,7 +57,7 @@ def scrape_picks_page(url: str) -> Optional[str]:
             logger.info("Scrape attempt %d for %s, waiting %ds", attempt + 1, url, delay)
             time.sleep(delay)
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=30)
+            resp = requests.get(url, headers=HEADERS, proxies=_proxies(), timeout=30)
             if resp.status_code == 429 or resp.status_code >= 500:
                 logger.warning("Got %d from %s, will retry", resp.status_code, url)
                 continue

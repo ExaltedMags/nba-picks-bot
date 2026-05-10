@@ -36,7 +36,7 @@ NBA_TEAM_NAMES = [
 ]
 
 # Sports to exclude for Ev's NBA filter
-EXCLUDE_SPORTS = ["NFL", "MLB", "CFB", "NCAAB", "Soccer", "NHL", "Tennis"]
+EXCLUDE_SPORTS = ["NFL", "MLB", "CFB", "NCAAB", "Soccer", "NHL", "Tennis", "WNBA"]
 
 # Domains that indicate a valid picks article link in Ev's pinned comment
 EV_PICKS_DOMAINS = ["guybostonsports.com"]

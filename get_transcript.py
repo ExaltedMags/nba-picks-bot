@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def _make_api() -> YouTubeTranscriptApi:
     if WEBSHARE_PROXY_USERNAME and WEBSHARE_PROXY_PASSWORD:
         return YouTubeTranscriptApi(
-            proxies=WebshareProxyConfig(
+            proxy_config=WebshareProxyConfig(
                 proxy_username=WEBSHARE_PROXY_USERNAME,
                 proxy_password=WEBSHARE_PROXY_PASSWORD,
             )

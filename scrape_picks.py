@@ -6,6 +6,7 @@ from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup, Tag
+from urllib.parse import quote
 
 from config import WEBSHARE_PROXY_PASSWORD, WEBSHARE_PROXY_USERNAME
 
@@ -24,7 +25,9 @@ RETRY_DELAYS = [5, 15, 30]  # seconds between attempts on 429/5xx
 
 def _proxies() -> Optional[dict]:
     if WEBSHARE_PROXY_USERNAME and WEBSHARE_PROXY_PASSWORD:
-        proxy_url = f"http://{WEBSHARE_PROXY_USERNAME}:{WEBSHARE_PROXY_PASSWORD}@p.webshare.io:80"
+        user = quote(WEBSHARE_PROXY_USERNAME, safe="")
+        passwd = quote(WEBSHARE_PROXY_PASSWORD, safe="")
+        proxy_url = f"http://{user}:{passwd}@p.webshare.io:80"
         return {"http": proxy_url, "https": proxy_url}
     return None
 

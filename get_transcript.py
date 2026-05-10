@@ -5,28 +5,20 @@ import re
 from typing import Optional
 
 from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled, YouTubeTranscriptApi
-from youtube_transcript_api.proxies import WebshareProxyConfig
-
-from config import WEBSHARE_PROXY_PASSWORD, WEBSHARE_PROXY_USERNAME
 
 logger = logging.getLogger(__name__)
 
 
-def _make_api() -> YouTubeTranscriptApi:
-    if WEBSHARE_PROXY_USERNAME and WEBSHARE_PROXY_PASSWORD:
-        return YouTubeTranscriptApi(
-            proxy_config=WebshareProxyConfig(
-                proxy_username=WEBSHARE_PROXY_USERNAME,
-                proxy_password=WEBSHARE_PROXY_PASSWORD,
-            )
-        )
-    return YouTubeTranscriptApi()
-
-
 def get_transcript(video_id: str) -> Optional[str]:
-    """Fetch manual or auto-generated captions and return clean plaintext."""
+    """Fetch manual or auto-generated captions and return clean plaintext.
+
+    Note: YouTube blocks transcript requests from cloud runner IPs (GitHub Actions,
+    AWS, Azure, etc.). This will return None on those environments unless a
+    residential proxy is configured at the YouTubeTranscriptApi level.
+    The pipeline falls back to the scraped picks sheet when this happens.
+    """
     try:
-        api = _make_api()
+        api = YouTubeTranscriptApi()
         transcript_list = api.list(video_id)
         try:
             transcript = transcript_list.find_manually_created_transcript(["en"])
@@ -40,7 +32,7 @@ def get_transcript(video_id: str) -> Optional[str]:
         logger.warning("No English transcript found for %s", video_id)
         return None
     except Exception as exc:
-        logger.error("Transcript fetch failed for %s: %s", video_id, exc)
+        logger.warning("Transcript unavailable for %s (likely IP block): %s", video_id, exc)
         return None
 
     lines: list[str] = []

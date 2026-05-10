@@ -163,7 +163,6 @@ def main() -> None:
         channel_name="DAFT (DaftPreviews)",
         filter_fn=daft_filter,
         allowed_domains=None,
-        max_days_back=7,  # TEST: extended lookback — revert to 1 after test
     )
 
     subject, body = build_report(ev_result, daft_result)

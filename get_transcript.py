@@ -1,48 +1,45 @@
-"""Extract and clean YouTube captions via youtube-transcript-api."""
+"""Fetch YouTube transcripts via Supadata API."""
 
 import logging
 import re
 from typing import Optional
 
-from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled, YouTubeTranscriptApi
+from supadata import Supadata
+
+from config import SUPADATA_API_KEY
 
 logger = logging.getLogger(__name__)
 
 
 def get_transcript(video_id: str) -> Optional[str]:
-    """Fetch manual or auto-generated captions and return clean plaintext.
+    """Return clean plaintext transcript using Supadata (bypasses YouTube IP blocks)."""
+    if not SUPADATA_API_KEY:
+        logger.warning("SUPADATA_API_KEY not set — skipping transcript")
+        return None
 
-    Note: YouTube blocks transcript requests from cloud runner IPs (GitHub Actions,
-    AWS, Azure, etc.). This will return None on those environments unless a
-    residential proxy is configured at the YouTubeTranscriptApi level.
-    The pipeline falls back to the scraped picks sheet when this happens.
-    """
     try:
-        api = YouTubeTranscriptApi()
-        transcript_list = api.list(video_id)
-        try:
-            transcript = transcript_list.find_manually_created_transcript(["en"])
-        except NoTranscriptFound:
-            transcript = transcript_list.find_generated_transcript(["en"])
-        entries = transcript.fetch()
-    except TranscriptsDisabled:
-        logger.warning("Captions disabled for %s", video_id)
-        return None
-    except NoTranscriptFound:
-        logger.warning("No English transcript found for %s", video_id)
-        return None
+        client = Supadata(api_key=SUPADATA_API_KEY)
+        result = client.youtube.transcript(video_id=video_id, lang="en")
     except Exception as exc:
-        logger.warning("Transcript unavailable for %s (likely IP block): %s", video_id, exc)
+        logger.warning("Transcript unavailable for %s: %s", video_id, exc)
         return None
 
-    lines: list[str] = []
-    prev = ""
-    for entry in entries:
-        text = re.sub(r"\s+", " ", entry.text).strip()
-        if text and text != prev:
-            lines.append(text)
-            prev = text
+    if not result or not result.content:
+        logger.warning("Empty transcript for %s", video_id)
+        return None
 
-    cleaned = " ".join(lines)
-    logger.info("Transcript extracted for %s (%d chars)", video_id, len(cleaned))
+    # content is either a plain string (text=True) or a list of chunks
+    if isinstance(result.content, str):
+        cleaned = result.content.strip()
+    else:
+        lines: list[str] = []
+        prev = ""
+        for chunk in result.content:
+            text = re.sub(r"\s+", " ", chunk.text).strip()
+            if text and text != prev:
+                lines.append(text)
+                prev = text
+        cleaned = " ".join(lines)
+
+    logger.info("Transcript fetched for %s (%d chars)", video_id, len(cleaned))
     return cleaned if cleaned else None

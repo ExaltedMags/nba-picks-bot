@@ -1,4 +1,4 @@
-youtube-transcript-api
+supadata
 google-genai
 requests
 beautifulsoup4

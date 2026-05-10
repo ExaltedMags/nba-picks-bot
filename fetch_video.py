@@ -33,14 +33,15 @@ def fetch_latest_video(
     filter_fn: Callable[[str], bool],
     channel_label: str = "",
     score_fn: Optional[Callable[[str], int]] = None,
+    max_days_back: int = 1,
 ) -> Optional[dict]:
     """
-    Return the best matching video from today (falling back to yesterday).
+    Return the best matching video from today (falling back up to max_days_back).
 
     If score_fn is provided, all videos passing filter_fn are scored and the
     highest scorer is returned — not just the first match.
     """
-    for days_back in (0, 1):
+    for days_back in range(0, max_days_back + 1):
         date = datetime.now(timezone.utc) - timedelta(days=days_back)
         published_after = date.replace(hour=0, minute=0, second=0, microsecond=0).strftime(
             "%Y-%m-%dT%H:%M:%SZ"

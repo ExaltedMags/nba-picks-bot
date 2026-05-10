@@ -58,6 +58,7 @@ def _process_channel(
     filter_fn,
     score_fn=None,
     allowed_domains=None,
+    max_days_back: int = 1,
 ) -> dict:
     """Run the full pipeline for one channel and return a result dict."""
     result = {
@@ -70,7 +71,7 @@ def _process_channel(
         "error": None,
     }
 
-    video = fetch_latest_video(channel_id, filter_fn, channel_label, score_fn)
+    video = fetch_latest_video(channel_id, filter_fn, channel_label, score_fn, max_days_back)
     if not video:
         result["error"] = "No qualifying video found for today."
         return result
@@ -162,6 +163,7 @@ def main() -> None:
         channel_name="DAFT (DaftPreviews)",
         filter_fn=daft_filter,
         allowed_domains=None,
+        max_days_back=7,  # TEST: extended lookback — revert to 1 after test
     )
 
     subject, body = build_report(ev_result, daft_result)

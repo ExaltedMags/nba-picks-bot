@@ -27,6 +27,5 @@ jobs:
           REPORT_RECIPIENT: ${{ secrets.REPORT_RECIPIENT }}
           EV_CHANNEL_ID: ${{ secrets.EV_CHANNEL_ID }}
           DAFT_CHANNEL_ID: ${{ secrets.DAFT_CHANNEL_ID }}
-          WEBSHARE_PROXY_USERNAME: ${{ secrets.WEBSHARE_PROXY_USERNAME }}
-          WEBSHARE_PROXY_PASSWORD: ${{ secrets.WEBSHARE_PROXY_PASSWORD }}
+          HTTP_PROXY_URL: ${{ secrets.HTTP_PROXY_URL }}
         run: python main.py

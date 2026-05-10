@@ -13,10 +13,10 @@ GMAIL_SENDER = os.environ.get("GMAIL_SENDER")
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 REPORT_RECIPIENT = os.environ.get("REPORT_RECIPIENT")
 
-# Webshare proxy — used to bypass IP blocks when scraping guybostonsports.com
-# Free tier at https://www.webshare.io
-WEBSHARE_PROXY_USERNAME = os.environ.get("WEBSHARE_PROXY_USERNAME")
-WEBSHARE_PROXY_PASSWORD = os.environ.get("WEBSHARE_PROXY_PASSWORD")
+# HTTP proxy URL for scraping — paste full URL from your proxy provider dashboard
+# Format: http://username:password@host:port
+# e.g. Webshare: copy the proxy URL directly from https://proxy.webshare.io/proxy/list
+HTTP_PROXY_URL = os.environ.get("HTTP_PROXY_URL")
 
 # Gemini model
 GEMINI_MODEL = "gemini-2.5-flash"

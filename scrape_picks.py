@@ -54,6 +54,21 @@ def scrape_picks_page(url: str) -> Optional[str]:
     return result
 
 
+def _clean_section(text: str) -> str:
+    """Strip image markdown, bare URLs, and sponsor/nav lines."""
+    lines = []
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if re.match(r"^!\[.*?\]\(.*?\)$", stripped):          # image-only line
+            continue
+        if re.match(r"^https?://\S+$", stripped):              # bare URL
+            continue
+        if re.match(r"^\[.*?\]\(https?://\S+\)$", stripped):  # link-only line
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _extract_picks_blocks(text: str) -> list[str]:
     lines = text.split("\n")
     blocks: list[str] = []
@@ -61,18 +76,16 @@ def _extract_picks_blocks(text: str) -> list[str]:
     i = 0
     while i < len(lines):
         line = lines[i]
-        heading_match = re.match(r"^(#{1,5})\s+(.+)$", line)
+        # Skip H1 (page title) — only match H2–H5 to avoid pulling in the whole page
+        heading_match = re.match(r"^(#{2,5})\s+(.+)$", line)
         if heading_match and any(kw in heading_match.group(2).lower() for kw in _PICKS_KEYWORDS):
-            level = len(heading_match.group(1))
             section_lines = [line]
             j = i + 1
-            while j < len(lines):
-                next_match = re.match(r"^(#{1,5})\s+", lines[j])
-                if next_match and len(next_match.group(1)) <= level:
-                    break
+            # Stop at the very next heading of any level
+            while j < len(lines) and not re.match(r"^#{1,5}\s+", lines[j]):
                 section_lines.append(lines[j])
                 j += 1
-            section = "\n".join(section_lines).strip()
+            section = _clean_section("\n".join(section_lines)).strip()
             if section:
                 blocks.append(section)
             i = j

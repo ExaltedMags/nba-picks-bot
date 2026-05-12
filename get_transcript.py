@@ -1,66 +1,44 @@
-"""Fetch YouTube transcripts via Apify YouTube Transcript Scraper actor."""
+"""Fetch YouTube transcripts via Supadata API."""
 
 import logging
 import re
 from typing import Optional
 
-import requests
+from supadata import Supadata
 
-from config import APIFY_API_KEY
+from config import SUPADATA_API_KEY
 
 logger = logging.getLogger(__name__)
 
-_ACTOR = "topaz_sharingan~youtube-transcript-scraper"
-_RUN_URL = f"https://api.apify.com/v2/acts/{_ACTOR}/run-sync-get-dataset-items"
-_TIMEOUT = 120  # seconds; actor cold-start can take ~30s
-
 
 def get_transcript(video_id: str) -> Optional[str]:
-    """Return clean plaintext transcript using Apify (bypasses YouTube IP blocks)."""
-    if not APIFY_API_KEY:
-        logger.warning("APIFY_API_KEY not set — skipping transcript")
+    """Return clean plaintext transcript using Supadata (bypasses YouTube IP blocks)."""
+    if not SUPADATA_API_KEY:
+        logger.warning("SUPADATA_API_KEY not set — skipping transcript")
         return None
 
-    url = f"https://www.youtube.com/watch?v={video_id}"
     try:
-        resp = requests.post(
-            _RUN_URL,
-            params={"token": APIFY_API_KEY},
-            json={"videoUrls": [url]},
-            timeout=_TIMEOUT,
-        )
-        resp.raise_for_status()
-        items = resp.json()
+        client = Supadata(api_key=SUPADATA_API_KEY)
+        result = client.youtube.transcript(video_id=video_id, lang="en")
     except Exception as exc:
         logger.warning("Transcript unavailable for %s: %s", video_id, exc)
         return None
 
-    if not items:
-        logger.warning("Empty transcript response for %s", video_id)
+    if not result or not result.content:
+        logger.warning("Empty transcript for %s", video_id)
         return None
 
-    item = items[0]
+    if isinstance(result.content, str):
+        cleaned = result.content.strip()
+    else:
+        lines: list[str] = []
+        prev = ""
+        for chunk in result.content:
+            text = re.sub(r"\s+", " ", chunk.text).strip()
+            if text and text != prev:
+                lines.append(text)
+                prev = text
+        cleaned = " ".join(lines)
 
-    # prefer plainText field if actor provides it
-    plain = item.get("plainText") or item.get("plain_text")
-    if plain and plain.strip():
-        cleaned = plain.strip()
-        logger.info("Transcript fetched for %s (%d chars)", video_id, len(cleaned))
-        return cleaned
-
-    chunks = item.get("transcript") or item.get("captions") or []
-    if not chunks:
-        logger.warning("No transcript chunks for %s (keys: %s)", video_id, list(item.keys()))
-        return None
-
-    lines: list[str] = []
-    prev = ""
-    for chunk in chunks:
-        text = re.sub(r"\s+", " ", chunk.get("text", "")).strip()
-        if text and text != prev:
-            lines.append(text)
-            prev = text
-
-    cleaned = " ".join(lines).strip()
     logger.info("Transcript fetched for %s (%d chars)", video_id, len(cleaned))
     return cleaned if cleaned else None

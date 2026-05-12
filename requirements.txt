@@ -1,3 +1,4 @@
+supadata
 google-genai
 requests
 beautifulsoup4

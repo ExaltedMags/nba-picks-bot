@@ -7,7 +7,7 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup, Tag
 
-from config import HTTP_PROXY_URL
+from config import APIFY_API_KEY, HTTP_PROXY_URL
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +21,38 @@ HEADERS = {
 
 RETRY_DELAYS = [5, 15, 30]  # seconds between attempts on 429/5xx
 
+_apify_proxy_cache: Optional[dict] = None
+
+
+def _apify_proxies() -> Optional[dict]:
+    """Fetch Apify residential proxy credentials once and cache them."""
+    global _apify_proxy_cache
+    if _apify_proxy_cache is not None:
+        return _apify_proxy_cache
+    if not APIFY_API_KEY:
+        return None
+    try:
+        resp = requests.get(
+            "https://api.apify.com/v2/users/me",
+            params={"token": APIFY_API_KEY},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        password = resp.json().get("data", {}).get("proxy", {}).get("password")
+        if password:
+            proxy_url = f"http://groups-RESIDENTIAL,country-US:{password}@proxy.apify.com:8000"
+            _apify_proxy_cache = {"http": proxy_url, "https": proxy_url}
+            logger.info("Apify residential proxy ready")
+            return _apify_proxy_cache
+    except Exception as exc:
+        logger.warning("Could not fetch Apify proxy credentials: %s", exc)
+    return None
+
 
 def _proxies() -> Optional[dict]:
+    proxies = _apify_proxies()
+    if proxies:
+        return proxies
     if HTTP_PROXY_URL:
         return {"http": HTTP_PROXY_URL, "https": HTTP_PROXY_URL}
     return None

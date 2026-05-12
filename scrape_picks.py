@@ -55,15 +55,25 @@ def scrape_picks_page(url: str) -> Optional[str]:
 
 
 def _clean_section(text: str) -> str:
-    """Strip image markdown, bare URLs, and sponsor/nav lines."""
+    """Strip images, bare URLs, link-only lines, and nav/footer noise."""
     lines = []
     for line in text.split("\n"):
         stripped = line.strip()
-        if re.match(r"^!\[.*?\]\(.*?\)$", stripped):          # image-only line
+        # Skip standalone image or linked-image lines
+        if re.match(r"^!?\[.*?\]\(.*?\)$", stripped):
             continue
-        if re.match(r"^https?://\S+$", stripped):              # bare URL
+        # Skip bare URLs
+        if re.match(r"^https?://\S+$", stripped):
             continue
-        if re.match(r"^\[.*?\]\(https?://\S+\)$", stripped):  # link-only line
+        # Skip nav/footer lines
+        if re.match(r"^(Post navigation|Copyright ©|← |→ )", stripped):
+            continue
+        # Replace inline images: ![Image N: alt](url) → alt, ![alt](url) → alt
+        line = re.sub(r"!\[(?:Image \d+: )?([^\]]*)\]\([^)]+\)", r"\1", line)
+        # Replace linked images: [![alt](src)](href) → alt
+        line = re.sub(r"\[!\[(?:Image \d+: )?([^\]]*)\]\([^)]+\)\]\([^)]+\)", r"\1", line)
+        # Drop lines that are empty after cleanup
+        if not line.strip():
             continue
         lines.append(line)
     return "\n".join(lines)
@@ -76,8 +86,8 @@ def _extract_picks_blocks(text: str) -> list[str]:
     i = 0
     while i < len(lines):
         line = lines[i]
-        # Skip H1 (page title) — only match H2–H5 to avoid pulling in the whole page
-        heading_match = re.match(r"^(#{2,5})\s+(.+)$", line)
+        # Only match H2–H3 — H4+ are typically related-posts/sidebar noise
+        heading_match = re.match(r"^(#{2,3})\s+(.+)$", line)
         if heading_match and any(kw in heading_match.group(2).lower() for kw in _PICKS_KEYWORDS):
             section_lines = [line]
             j = i + 1

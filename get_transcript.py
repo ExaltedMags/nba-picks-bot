@@ -10,7 +10,7 @@ from config import APIFY_API_KEY
 
 logger = logging.getLogger(__name__)
 
-_ACTOR = "apify~youtube-transcript-scraper"
+_ACTOR = "topaz_sharingan~youtube-transcript-scraper"
 _RUN_URL = f"https://api.apify.com/v2/acts/{_ACTOR}/run-sync-get-dataset-items"
 _TIMEOUT = 120  # seconds; actor cold-start can take ~30s
 
@@ -40,6 +40,14 @@ def get_transcript(video_id: str) -> Optional[str]:
         return None
 
     item = items[0]
+
+    # prefer plainText field if actor provides it
+    plain = item.get("plainText") or item.get("plain_text")
+    if plain and plain.strip():
+        cleaned = plain.strip()
+        logger.info("Transcript fetched for %s (%d chars)", video_id, len(cleaned))
+        return cleaned
+
     chunks = item.get("transcript") or item.get("captions") or []
     if not chunks:
         logger.warning("No transcript chunks for %s (keys: %s)", video_id, list(item.keys()))

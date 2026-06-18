@@ -1,4 +1,4 @@
-"""NBA Picks Automation — daily orchestrator."""
+"""WNBA Picks Automation — daily orchestrator."""
 
 import logging
 import sys
@@ -7,7 +7,7 @@ from datetime import datetime
 import pytz
 
 from config import (
-    DAFT_CHANNEL_ID,
+    DYJ_CHANNEL_ID,
     EV_CHANNEL_ID,
     EV_PICKS_DOMAINS,
     GEMINI_API_KEY,
@@ -17,7 +17,7 @@ from config import (
     REPORT_RECIPIENT,
     YOUTUBE_API_KEY,
 )
-from fetch_video import daft_filter, ev_filter, ev_score, fetch_latest_video
+from fetch_video import fetch_latest_video, wnba_filter, wnba_score
 from get_pinned_comment import get_pinned_comment_url
 from get_transcript import get_transcript
 from scrape_picks import scrape_picks_page
@@ -126,46 +126,47 @@ def _format_channel_block(result: dict) -> str:
     return "\n".join(lines)
 
 
-def build_report(ev_result: dict, daft_result: dict) -> tuple[str, str]:
+def build_report(ev_result: dict, dyj_result: dict) -> tuple[str, str]:
     """Return (subject, body) for the email."""
     pht_tz = pytz.timezone(PHT)
     now_pht = datetime.now(pht_tz)
     date_str = now_pht.strftime("%B %d, %Y")
     ts_str = now_pht.strftime("%Y-%m-%d %H:%M PHT")
 
-    subject = f"🏀 NBA Picks Report — {date_str}"
+    subject = f"🏀 WNBA Picks Report — {date_str}"
 
-    header = f"🏀 NBA PICKS REPORT — {date_str}"
+    header = f"🏀 WNBA PICKS REPORT — {date_str}"
     ev_block = _format_channel_block(ev_result)
-    daft_block = _format_channel_block(daft_result)
+    dyj_block = _format_channel_block(dyj_result)
     footer = f"{DIVIDER}\n⏱ Generated {ts_str}"
-    body = "\n\n".join([header, ev_block, daft_block, footer])
+    body = "\n\n".join([header, ev_block, dyj_block, footer])
 
     return subject, body
 
 
 def main() -> None:
     _check_secrets()
-    logger.info("Starting NBA picks pipeline")
+    logger.info("Starting WNBA picks pipeline")
 
     ev_result = _process_channel(
         channel_id=EV_CHANNEL_ID,
         channel_label="EV",
-        channel_name="EV (GuyBostonSports)",
-        filter_fn=ev_filter,
-        score_fn=ev_score,
+        channel_name="Guy Boston Sports (WNBA)",
+        filter_fn=wnba_filter,
+        score_fn=wnba_score,
         allowed_domains=EV_PICKS_DOMAINS,
     )
 
-    daft_result = _process_channel(
-        channel_id=DAFT_CHANNEL_ID,
-        channel_label="DAFT",
-        channel_name="DAFT (DaftPreviews)",
-        filter_fn=daft_filter,
+    dyj_result = _process_channel(
+        channel_id=DYJ_CHANNEL_ID,
+        channel_label="DYJ",
+        channel_name="Do Your Job Sports (WNBA)",
+        filter_fn=wnba_filter,
+        score_fn=wnba_score,
         allowed_domains=None,
     )
 
-    subject, body = build_report(ev_result, daft_result)
+    subject, body = build_report(ev_result, dyj_result)
     logger.info("Report built (%d chars)", len(body))
 
     send_email(subject, body)

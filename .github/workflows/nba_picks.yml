@@ -1,4 +1,4 @@
-name: NBA Picks Daily Report
+name: WNBA Picks Daily Report
 
 on:
   schedule:
@@ -27,6 +27,6 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT: ${{ secrets.REPORT_RECIPIENT }}
           EV_CHANNEL_ID: ${{ secrets.EV_CHANNEL_ID }}
-          DAFT_CHANNEL_ID: ${{ secrets.DAFT_CHANNEL_ID }}
+          DYJ_CHANNEL_ID: ${{ secrets.DYJ_CHANNEL_ID }}
           HTTP_PROXY_URL: ${{ secrets.HTTP_PROXY_URL }}
         run: python main.py

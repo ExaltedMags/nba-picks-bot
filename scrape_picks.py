@@ -30,6 +30,18 @@ _NOISE_HEADINGS = (
     "newsletter",
 )
 
+# A real picks sheet carries at least one of these: odds (+150/-110), units,
+# over/under totals, spreads, prop/ML language, or pick/bet wording.
+_BET_SIGNAL = re.compile(
+    r"([+-]\d{2,4}\b|\b\d+(?:\.\d+)?\s*units?\b|\bo/?\s*\d|\bu/?\s*\d|\bover\b|\bunder\b"
+    r"|\bspread\b|\btotal\b|\bml\b|\bmoneyline\b|\bparlay\b|\bprop\b|\bpick\b|\bbet\b)",
+    re.IGNORECASE,
+)
+
+
+def _has_bet_signal(text: str) -> bool:
+    return _BET_SIGNAL.search(text) is not None
+
 
 def scrape_picks_page(url: str) -> Optional[str]:
     """Return plaintext picks content fetched via Jina Reader (no proxy needed)."""
@@ -66,6 +78,13 @@ def scrape_picks_page(url: str) -> Optional[str]:
         return None
 
     result = "\n\n".join(blocks)
+
+    # Backstop: only return content that actually carries a betting signal, so
+    # stray boilerplate (comment forms, nav) never surfaces as a "picks sheet".
+    if not _has_bet_signal(result):
+        logger.warning("Scraped content for %s lacks any betting signal, discarding", url)
+        return None
+
     logger.info("Scraped %d chars from %s via Jina", len(result), url)
     return result
 

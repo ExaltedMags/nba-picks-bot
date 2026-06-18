@@ -97,6 +97,21 @@ def _process_channel(
     return result
 
 
+def _result_health(result: dict) -> tuple[str, str]:
+    """Classify a channel result as OK / DEGRADED / FAILED with a short note."""
+    if result["error"]:
+        return "FAILED", result["error"]
+
+    summary = (result["summary"] or "").strip()
+    if not summary:
+        return "DEGRADED", "AI summary missing."
+    if summary.startswith("(Gemini unavailable"):
+        return "DEGRADED", "AI summary failed; showing raw transcript excerpt."
+    if not result["transcript"] and not result["scraped_picks"]:
+        return "DEGRADED", "No transcript or picks sheet could be retrieved."
+    return "OK", ""
+
+
 def _format_channel_block(result: dict) -> str:
     icon = "📺"
     name = result["channel_name"]
@@ -105,6 +120,10 @@ def _format_channel_block(result: dict) -> str:
     if result["error"]:
         lines.append(f"⚠️ {result['error']}")
         return "\n".join(lines)
+
+    status, note = _result_health(result)
+    if status != "OK":
+        lines.append(f"⚠️ [{status}] {note}")
 
     video = result["video"]
     lines.append(f"🎬 {video['title']}")
@@ -133,7 +152,10 @@ def build_report(ev_result: dict, dyj_result: dict) -> tuple[str, str]:
     date_str = now_pht.strftime("%B %d, %Y")
     ts_str = now_pht.strftime("%Y-%m-%d %H:%M PHT")
 
-    subject = f"🏀 WNBA Picks Report — {date_str}"
+    statuses = [_result_health(ev_result)[0], _result_health(dyj_result)[0]]
+    flag = "⚠️ " if any(s != "OK" for s in statuses) else ""
+
+    subject = f"{flag}🏀 WNBA Picks Report — {date_str}"
 
     header = f"🏀 WNBA PICKS REPORT — {date_str}"
     ev_block = _format_channel_block(ev_result)

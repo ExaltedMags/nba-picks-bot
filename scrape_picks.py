@@ -12,7 +12,23 @@ logger = logging.getLogger(__name__)
 _JINA_PREFIX = "https://r.jina.ai/"
 _TIMEOUT = 30
 _RETRY_DELAYS = [5, 15, 30]
-_PICKS_KEYWORDS = {"pick", "bet", "prediction", "best bet", "best bets", "plays"}
+_PICKS_KEYWORDS = {"pick", "bet", "prediction", "best bet", "best bets", "plays", "play"}
+
+# Headings that mark the end of the article body — everything from here down is
+# comment forms, related posts, navigation, etc. and must never be returned.
+_NOISE_HEADINGS = (
+    "related",
+    "post navigation",
+    "leave a reply",
+    "leave a comment",
+    "cancel reply",
+    "comments",
+    "you may also like",
+    "more from",
+    "recent posts",
+    "subscribe",
+    "newsletter",
+)
 
 
 def scrape_picks_page(url: str) -> Optional[str]:
@@ -79,21 +95,58 @@ def _clean_section(text: str) -> str:
     return "\n".join(lines)
 
 
+def _heading_text(line: str) -> Optional[str]:
+    """Return the text of a markdown heading line, or None if not a heading."""
+    m = re.match(r"^#{1,6}\s+(.+)$", line)
+    return m.group(1).strip() if m else None
+
+
+def _label_text(line: str) -> Optional[str]:
+    """
+    Return the text of a 'label' line that introduces picks.
+
+    Matches markdown headings (## Picks) and standalone bold labels rendered by
+    the article (e.g. **Trey's Plays:**), which is how this site marks its plays.
+    """
+    heading = _heading_text(line)
+    if heading is not None:
+        return heading
+    bold = re.match(r"^\*{1,3}(.+?)\*{1,3}:?\s*$", line.strip())
+    if bold:
+        return bold.group(1).strip()
+    return None
+
+
+def _is_noise(text: str) -> bool:
+    t = text.lower()
+    return any(noise in t for noise in _NOISE_HEADINGS)
+
+
 def _extract_picks_blocks(text: str) -> list[str]:
     lines = text.split("\n")
+
+    # 1. Truncate the document at the first noise section (comments / related /
+    #    navigation) so that junk like "Leave a Reply" can never be captured.
+    end = len(lines)
+    for idx, line in enumerate(lines):
+        heading = _heading_text(line)
+        if heading and _is_noise(heading):
+            end = idx
+            break
+    body = lines[:end]
+
     blocks: list[str] = []
 
+    # 2. Capture each picks section, anchored on a heading OR a bold label that
+    #    contains a picks keyword, up to the next heading.
     i = 0
-    while i < len(lines):
-        line = lines[i]
-        # Only match H2–H3 — H4+ are typically related-posts/sidebar noise
-        heading_match = re.match(r"^(#{2,3})\s+(.+)$", line)
-        if heading_match and any(kw in heading_match.group(2).lower() for kw in _PICKS_KEYWORDS):
-            section_lines = [line]
+    while i < len(body):
+        label = _label_text(body[i])
+        if label and not _is_noise(label) and any(kw in label.lower() for kw in _PICKS_KEYWORDS):
+            section_lines = [body[i]]
             j = i + 1
-            # Stop at the very next heading of any level
-            while j < len(lines) and not re.match(r"^#{1,5}\s+", lines[j]):
-                section_lines.append(lines[j])
+            while j < len(body) and _heading_text(body[j]) is None:
+                section_lines.append(body[j])
                 j += 1
             section = _clean_section("\n".join(section_lines)).strip()
             if section:
@@ -102,10 +155,17 @@ def _extract_picks_blocks(text: str) -> list[str]:
             continue
         i += 1
 
-    # Fallback: grab all markdown table rows if no headed sections matched
+    # 3. Fallback: markdown table rows (some articles post picks as a table).
     if not blocks:
-        table_lines = [l for l in lines if l.strip().startswith("|") and "|" in l[1:]]
+        table_lines = [l for l in body if l.strip().startswith("|") and "|" in l.strip()[1:]]
         if table_lines:
             blocks.append("\n".join(table_lines))
+
+    # 4. Last resort: any body line that mentions a pick keyword.
+    if not blocks:
+        cleaned = _clean_section("\n".join(body))
+        keep = [l for l in cleaned.split("\n") if any(kw in l.lower() for kw in _PICKS_KEYWORDS)]
+        if keep:
+            blocks.append("\n".join(keep))
 
     return blocks

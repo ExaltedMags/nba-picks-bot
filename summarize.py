@@ -1,6 +1,7 @@
-"""Summarize NBA picks via the Gemini API."""
+"""Summarize WNBA picks via the Gemini API."""
 
 import logging
+import time
 from typing import Optional
 
 from google import genai
@@ -11,12 +12,20 @@ from config import GEMINI_API_KEY, GEMINI_MODEL
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "You are a sports betting assistant. Extract all NBA picks clearly and concisely. "
+    "You are a sports betting assistant. The content below is about WNBA "
+    "(women's professional basketball) betting. Extract all betting picks "
+    "clearly and concisely — including sides, totals, player props, and parlays. "
     "For each pick, output: Game | Pick | Line/Spread/Total | Confidence or Units if mentioned. "
-    "Also note any key reasoning if briefly stated. Be terse. Output as a clean list."
+    "Also note any key reasoning if briefly stated. Be terse. Output as a clean list. "
+    "Do not say picks are missing just because a specific league name is absent — "
+    "treat any basketball wager mentioned as a pick."
 )
 
 MAX_TRANSCRIPT_CHARS = 80_000
+
+# Retry transient Gemini failures (503 model-overloaded, 429 rate limit, timeouts)
+# before falling back to a raw excerpt.
+_RETRY_DELAYS = [2, 5, 10]
 
 
 def summarize_with_gemini(
@@ -43,17 +52,31 @@ def summarize_with_gemini(
 
     user_message = "\n".join(parts)
 
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=user_message,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-            ),
-        )
-        return response.text.strip()
-    except Exception as exc:
-        logger.error("Gemini API error for %s: %s", channel_name, exc)
-        fallback = (transcript or scraped_picks or "")[:1500]
-        return f"(Gemini unavailable — raw excerpt)\n\n{fallback}"
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    last_exc: Optional[Exception] = None
+
+    for attempt, delay in enumerate([0] + _RETRY_DELAYS):
+        if delay:
+            logger.info(
+                "Retrying Gemini for %s (attempt %d) after %ds", channel_name, attempt + 1, delay
+            )
+            time.sleep(delay)
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=user_message,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                ),
+            )
+            text = (response.text or "").strip()
+            if text:
+                return text
+            logger.warning("Gemini returned empty text for %s, will retry", channel_name)
+        except Exception as exc:  # noqa: BLE001 — SDK raises many transient error types
+            last_exc = exc
+            logger.warning("Gemini attempt %d failed for %s: %s", attempt + 1, channel_name, exc)
+
+    logger.error("Gemini unavailable for %s after retries: %s", channel_name, last_exc)
+    fallback = (transcript or scraped_picks or "")[:1500]
+    return f"(Gemini unavailable — raw excerpt)\n\n{fallback}"

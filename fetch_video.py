@@ -1,6 +1,7 @@
 """Fetch the latest qualifying YouTube video for a channel."""
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
@@ -83,54 +84,47 @@ def fetch_latest_video(
 # Filter and score functions
 # ---------------------------------------------------------------------------
 
-def ev_filter(title: str) -> bool:
-    """Return True if the video title matches Ev's NBA picks heuristic."""
-    from config import NBA_TEAM_NAMES, EXCLUDE_SPORTS
+def _has_word(word: str, text: str) -> bool:
+    """Whole-word match (so 'NBA' does not match inside 'WNBA')."""
+    return re.search(rf"\b{re.escape(word)}\b", text) is not None
+
+
+def wnba_filter(title: str) -> bool:
+    """Return True if the video title is about WNBA picks."""
+    from config import WNBA_TEAM_NAMES, EXCLUDE_SPORTS
 
     t = title.upper()
 
+    # Drop videos for other sports (e.g. men's NBA, MLB) so we only keep WNBA.
     for sport in EXCLUDE_SPORTS:
-        if sport.upper() in t:
+        if _has_word(sport.upper(), t):
             return False
 
-    if "NBA" in t:
+    if "WNBA" in t:
         return True
-    for team in NBA_TEAM_NAMES:
-        if team.upper() in t:
+    for team in WNBA_TEAM_NAMES:
+        if _has_word(team.upper(), t):
             return True
-    if "PICKS" in t or "BEST BETS" in t:
-        return True
     return False
 
 
-def ev_score(title: str) -> int:
+def wnba_score(title: str) -> int:
     """
-    Rank Ev's videos so his regular picks post wins over props/other-host videos.
+    Rank a channel's videos so the main picks post wins over props-only videos.
 
     Higher is better.
     """
     t = title.upper()
     score = 0
 
-    # Strong positive: explicit picks content (not a props-only video)
-    if "PICKS" in t and "PLAYER PROPS" not in t:
+    # Strong positive: explicit picks / best-bets content.
+    if "PICKS" in t:
         score += 10
-    if "BEST BETS" in t and "PLAYER PROPS" not in t:
+    if "BEST BETS" in t:
         score += 5
 
-    # Mild positive: NBA label
-    if "NBA" in t:
-        score += 3
-
-    # Negative: props-only videos are from a different segment/host
-    if "PLAYER PROPS" in t:
+    # Negative: a dedicated player-props video (no broader picks coverage).
+    if "PROPS" in t and "PICKS" not in t and "BEST BETS" not in t:
         score -= 8
-    elif "PROPS" in t:
-        score -= 4
 
     return score
-
-
-def daft_filter(_title: str) -> bool:
-    """All videos from Daft's channel are relevant."""
-    return True

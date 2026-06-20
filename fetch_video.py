@@ -7,7 +7,7 @@ from typing import Callable, Optional
 
 import requests
 
-from config import YOUTUBE_API_KEY
+from config import YOUTUBE_API_KEY, MAX_VIDEO_AGE_HOURS
 
 logger = logging.getLogger(__name__)
 
@@ -29,55 +29,85 @@ def _search(channel_id: str, published_after: str) -> list[dict]:
     return resp.json().get("items", [])
 
 
+def _parse_published(value: str) -> Optional[datetime]:
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
 def fetch_latest_video(
     channel_id: str,
     filter_fn: Callable[[str], bool],
     channel_label: str = "",
     score_fn: Optional[Callable[[str], int]] = None,
-    max_days_back: int = 1,
+    max_age_hours: Optional[int] = None,
 ) -> Optional[dict]:
     """
-    Return the best matching video from today (falling back up to max_days_back).
+    Return the freshest qualifying video published within the freshness window.
 
-    If score_fn is provided, all videos passing filter_fn are scored and the
-    highest scorer is returned — not just the first match.
+    A strict age window (config.MAX_VIDEO_AGE_HOURS) is enforced so we never grab
+    a previous day's video and present it as today's: if today's video isn't up
+    yet, this returns None (treated as an EMPTY channel) rather than a stale one.
+
+    If score_fn is provided, qualifying videos are scored and the highest scorer
+    wins; ties break toward the most recent upload.
     """
-    for days_back in range(0, max_days_back + 1):
-        date = datetime.now(timezone.utc) - timedelta(days=days_back)
-        published_after = date.replace(hour=0, minute=0, second=0, microsecond=0).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        try:
-            items = _search(channel_id, published_after)
-        except requests.RequestException as exc:
-            logger.error("YouTube search failed for %s: %s", channel_label, exc)
-            return None
+    if max_age_hours is None:
+        max_age_hours = MAX_VIDEO_AGE_HOURS
 
-        matches = [item for item in items if filter_fn(item["snippet"]["title"])]
-        if not matches:
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=max_age_hours)
+    published_after = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    try:
+        items = _search(channel_id, published_after)
+    except requests.RequestException as exc:
+        logger.error("YouTube search failed for %s: %s", channel_label, exc)
+        return None
+
+    # Keep only videos that pass the filter AND are genuinely within the window.
+    # (publishedAfter already filters server-side; the explicit check guards
+    # against any edge cases and lets us log the real age.)
+    matches: list[tuple[dict, datetime]] = []
+    for item in items:
+        title = item["snippet"]["title"]
+        if not filter_fn(title):
             continue
+        pub_dt = _parse_published(item["snippet"].get("publishedAt", ""))
+        if pub_dt is None or pub_dt < cutoff:
+            continue
+        matches.append((item, pub_dt))
 
-        if score_fn:
-            matches.sort(key=lambda x: score_fn(x["snippet"]["title"]), reverse=True)
+    if not matches:
+        logger.warning(
+            "No qualifying video within %dh for %s", max_age_hours, channel_label
+        )
+        return None
 
-        best = matches[0]
-        video_id = best["id"]["videoId"]
-        title = best["snippet"]["title"]
+    if score_fn:
+        matches.sort(key=lambda m: (score_fn(m[0]["snippet"]["title"]), m[1]), reverse=True)
+    else:
+        matches.sort(key=lambda m: m[1], reverse=True)
 
-        if score_fn and len(matches) > 1:
-            scores = [(m["snippet"]["title"], score_fn(m["snippet"]["title"])) for m in matches]
-            logger.info("Video scores for %s: %s", channel_label, scores)
+    best, best_pub = matches[0]
+    video_id = best["id"]["videoId"]
+    title = best["snippet"]["title"]
+    age_hours = (now - best_pub).total_seconds() / 3600
 
-        logger.info("Selected video for %s: %s (%s)", channel_label, title, video_id)
-        return {
-            "video_id": video_id,
-            "title": title,
-            "published_at": best["snippet"]["publishedAt"],
-            "url": f"https://www.youtube.com/watch?v={video_id}",
-        }
+    if score_fn and len(matches) > 1:
+        scores = [(m[0]["snippet"]["title"], score_fn(m[0]["snippet"]["title"])) for m in matches]
+        logger.info("Video scores for %s: %s", channel_label, scores)
 
-    logger.warning("No qualifying video found for %s", channel_label)
-    return None
+    logger.info(
+        "Selected video for %s: %s (%s, %.1fh old)", channel_label, title, video_id, age_hours
+    )
+    return {
+        "video_id": video_id,
+        "title": title,
+        "published_at": best["snippet"]["publishedAt"],
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+    }
 
 
 # ---------------------------------------------------------------------------

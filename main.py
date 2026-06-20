@@ -64,7 +64,7 @@ def _process_channel(
     filter_fn,
     score_fn=None,
     allowed_domains=None,
-    max_days_back: int = 1,
+    max_age_hours=None,
 ) -> dict:
     """Run the full pipeline for one channel and return a result dict."""
     result = {
@@ -77,9 +77,9 @@ def _process_channel(
         "error": None,
     }
 
-    video = fetch_latest_video(channel_id, filter_fn, channel_label, score_fn, max_days_back)
+    video = fetch_latest_video(channel_id, filter_fn, channel_label, score_fn, max_age_hours)
     if not video:
-        result["error"] = "No qualifying video found for today."
+        result["error"] = "No fresh video found for today."
         return result
 
     result["video"] = video
@@ -223,20 +223,25 @@ def main() -> None:
     ev_result = _process_channel_resilient(ev_spec)
     dyj_result = _process_channel_resilient(dyj_spec)
 
-    # Hard guardrail: never send a misleading partial report. If any channel is
-    # still DEGRADED after full retries, block the email entirely and fail the
-    # run so the failure is loud (GitHub Actions marks the job red) rather than
-    # quietly delivering broken output.
-    degraded = {
-        label: _result_health(result)[1]
-        for label, result in (("EV", ev_result), ("DYJ", dyj_result))
-        if _result_health(result)[0] == "DEGRADED"
+    # Hard guardrail: only send when BOTH channels are OK. Anything else blocks
+    # the email so you never get a misleading or partial report.
+    #   - DEGRADED (a video existed but couldn't be processed) → block + exit 1
+    #     so the run goes red and you're alerted that something broke.
+    #   - EMPTY (no fresh video — off-day or not posted yet) → block + exit 0,
+    #     since nothing actually broke; there's just nothing to report.
+    health = {
+        "EV": _result_health(ev_result),
+        "DYJ": _result_health(dyj_result),
     }
-    if degraded:
-        for label, note in degraded.items():
-            logger.error("[%s] still degraded after %d attempts: %s", label, _CHANNEL_ATTEMPTS, note)
-        logger.error("Email blocked — degraded output, no report sent.")
-        sys.exit(1)
+    not_ok = {label: (status, note) for label, (status, note) in health.items() if status != "OK"}
+    if not_ok:
+        for label, (status, note) in not_ok.items():
+            logger.error("[%s] %s: %s", label, status, note)
+        has_degraded = any(status == "DEGRADED" for status, _ in not_ok.values())
+        logger.error(
+            "Email blocked — report incomplete (need both channels OK). No report sent."
+        )
+        sys.exit(1 if has_degraded else 0)
 
     subject, body = build_report(ev_result, dyj_result)
     logger.info("Report built (%d chars)", len(body))

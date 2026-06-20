@@ -93,17 +93,26 @@ Runs daily at **4:00 PM UTC = 12:00 AM Philippine Time (PHT)**.
 
 ## Reliability / Guardrails
 
-The bot will **not** send a misleading partial report:
+The email is sent **only when both channels are OK** — you never get a
+misleading, partial, or stale report.
 
-- Each channel is classified **OK** (clean summary), **EMPTY** (no qualifying
-  video — a legitimate off-day), or **DEGRADED** (a video existed but couldn't
-  be turned into a usable summary — e.g. the AI fell back to a raw transcript
-  excerpt, or no transcript/picks sheet could be retrieved).
+- Each channel is classified **OK** (clean summary), **EMPTY** (no fresh video),
+  or **DEGRADED** (a video existed but couldn't be turned into a usable
+  summary — e.g. the AI fell back to a raw transcript excerpt, or no
+  transcript/picks sheet could be retrieved).
 - A **DEGRADED** channel triggers a full pipeline re-run (up to 3 attempts with
   backoff).
-- If any channel is **still DEGRADED** after retries, **the email is blocked
-  entirely** and the job exits non-zero, so the GitHub Actions run goes red
-  instead of delivering broken output. Enable Actions failure notifications to
-  be alerted when this happens.
-- An **EMPTY** channel does not block the email; the report is still sent and
-  notes that no video was found for that channel.
+- If, after retries, **either channel is not OK**, the email is **blocked
+  entirely**:
+  - **DEGRADED** (something broke) → job exits non-zero, so the GitHub Actions
+    run goes **red** and you're alerted. Enable Actions failure notifications.
+  - **EMPTY** (off-day or today's video not posted yet) → job exits zero (no
+    email, but not a failure — there was simply nothing to report).
+
+### Freshness (no stale videos)
+
+A video only counts as "today's" if it was published within
+`MAX_VIDEO_AGE_HOURS` (default **22h**, env-configurable). If today's video
+isn't up yet, the channel is treated as **EMPTY** rather than silently falling
+back to the previous day's video and mislabeling it as today's. The 22h default
+is tuned to the 16:00 UTC schedule — adjust it if you change the cron time.

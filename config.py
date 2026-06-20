@@ -24,6 +24,13 @@ HTTP_PROXY_URL = os.environ.get("HTTP_PROXY_URL")
 # Gemini model
 GEMINI_MODEL = "gemini-2.5-flash"
 
+# Freshness window: a video only counts as "today's" if it was published within
+# this many hours of the run. This prevents grabbing a previous day's video and
+# presenting it as today's. Tuned for the daily 16:00 UTC schedule (today's
+# picks post in the ~16h before the run; the prior day's are ~24h+ old, so 22h
+# accepts today's and rejects yesterday's). Adjust if you change the cron time.
+MAX_VIDEO_AGE_HOURS = int(os.environ.get("MAX_VIDEO_AGE_HOURS", "22"))
+
 # Timezone
 PHT = "Asia/Manila"
 

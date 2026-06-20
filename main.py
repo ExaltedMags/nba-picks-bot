@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import time
 from datetime import datetime
 
 import pytz
@@ -32,6 +33,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DIVIDER = "━" * 25
+
+# Full-pipeline retry policy: re-run a channel that produced DEGRADED output
+# (e.g. the AI fell back to a raw excerpt) before giving up on it.
+_CHANNEL_ATTEMPTS = 3
+_CHANNEL_BACKOFF = [20, 60]  # seconds between full-pipeline attempts
 
 
 def _check_secrets() -> None:
@@ -98,18 +104,45 @@ def _process_channel(
 
 
 def _result_health(result: dict) -> tuple[str, str]:
-    """Classify a channel result as OK / DEGRADED / FAILED with a short note."""
+    """
+    Classify a channel result with a short note.
+
+    - OK:       clean, usable summary.
+    - EMPTY:    no qualifying video (legitimate off-day) — safe to report as-is.
+    - DEGRADED: a video existed but could not be turned into a usable summary.
+                This is the state that triggers a full retry and, if it
+                persists, blocks the whole email.
+    """
     if result["error"]:
-        return "FAILED", result["error"]
+        return "EMPTY", result["error"]
 
     summary = (result["summary"] or "").strip()
     if not summary:
         return "DEGRADED", "AI summary missing."
     if summary.startswith("(Gemini unavailable"):
-        return "DEGRADED", "AI summary failed; showing raw transcript excerpt."
+        return "DEGRADED", "AI summary failed; only a raw excerpt is available."
     if not result["transcript"] and not result["scraped_picks"]:
         return "DEGRADED", "No transcript or picks sheet could be retrieved."
     return "OK", ""
+
+
+def _process_channel_resilient(spec: dict) -> dict:
+    """Run a channel pipeline, fully re-running it while the output is DEGRADED."""
+    result = _process_channel(**spec)
+    attempt = 1
+    while attempt < _CHANNEL_ATTEMPTS:
+        status, note = _result_health(result)
+        if status != "DEGRADED":
+            return result
+        delay = _CHANNEL_BACKOFF[min(attempt - 1, len(_CHANNEL_BACKOFF) - 1)]
+        logger.warning(
+            "[%s] degraded (%s) — full pipeline retry %d/%d after %ds",
+            spec["channel_label"], note, attempt + 1, _CHANNEL_ATTEMPTS, delay,
+        )
+        time.sleep(delay)
+        result = _process_channel(**spec)
+        attempt += 1
+    return result
 
 
 def _format_channel_block(result: dict) -> str:
@@ -170,7 +203,7 @@ def main() -> None:
     _check_secrets()
     logger.info("Starting WNBA picks pipeline")
 
-    ev_result = _process_channel(
+    ev_spec = dict(
         channel_id=EV_CHANNEL_ID,
         channel_label="EV",
         channel_name="Guy Boston Sports (WNBA)",
@@ -178,8 +211,7 @@ def main() -> None:
         score_fn=wnba_score,
         allowed_domains=EV_PICKS_DOMAINS,
     )
-
-    dyj_result = _process_channel(
+    dyj_spec = dict(
         channel_id=DYJ_CHANNEL_ID,
         channel_label="DYJ",
         channel_name="Do Your Job Sports (WNBA)",
@@ -187,6 +219,24 @@ def main() -> None:
         score_fn=wnba_score,
         allowed_domains=None,
     )
+
+    ev_result = _process_channel_resilient(ev_spec)
+    dyj_result = _process_channel_resilient(dyj_spec)
+
+    # Hard guardrail: never send a misleading partial report. If any channel is
+    # still DEGRADED after full retries, block the email entirely and fail the
+    # run so the failure is loud (GitHub Actions marks the job red) rather than
+    # quietly delivering broken output.
+    degraded = {
+        label: _result_health(result)[1]
+        for label, result in (("EV", ev_result), ("DYJ", dyj_result))
+        if _result_health(result)[0] == "DEGRADED"
+    }
+    if degraded:
+        for label, note in degraded.items():
+            logger.error("[%s] still degraded after %d attempts: %s", label, _CHANNEL_ATTEMPTS, note)
+        logger.error("Email blocked — degraded output, no report sent.")
+        sys.exit(1)
 
     subject, body = build_report(ev_result, dyj_result)
     logger.info("Report built (%d chars)", len(body))

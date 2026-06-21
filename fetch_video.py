@@ -138,11 +138,17 @@ def wnba_filter(title: str) -> bool:
     return False
 
 
-def wnba_score(title: str) -> int:
+def world_cup_filter(title: str) -> bool:
+    """Return True if the video title is about (FIFA) World Cup picks."""
+    t = title.upper()
+    return "WORLD CUP" in t or "FIFA" in t
+
+
+def picks_score(title: str) -> int:
     """
     Rank a channel's videos so the main picks post wins over props-only videos.
 
-    Higher is better.
+    Sport-agnostic. Higher is better.
     """
     t = title.upper()
     score = 0

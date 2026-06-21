@@ -4,6 +4,7 @@ import logging
 import sys
 import time
 from datetime import datetime
+from typing import Optional
 
 import pytz
 
@@ -18,7 +19,7 @@ from config import (
     REPORT_RECIPIENT,
     YOUTUBE_API_KEY,
 )
-from fetch_video import fetch_latest_video, wnba_filter, wnba_score
+from fetch_video import fetch_latest_video, picks_score, wnba_filter, world_cup_filter
 from get_pinned_comment import get_pinned_comment_url
 from get_transcript import get_transcript
 from scrape_picks import scrape_picks_page
@@ -178,72 +179,91 @@ def _format_channel_block(result: dict) -> str:
     return "\n".join(lines)
 
 
-def build_report(ev_result: dict, dyj_result: dict) -> tuple[str, str]:
-    """Return (subject, body) for the email."""
+def build_report(results: list[dict], notes: Optional[list[str]] = None) -> tuple[str, str]:
+    """Return (subject, body) for the email from the channel results to show."""
     pht_tz = pytz.timezone(PHT)
     now_pht = datetime.now(pht_tz)
     date_str = now_pht.strftime("%B %d, %Y")
     ts_str = now_pht.strftime("%Y-%m-%d %H:%M PHT")
 
-    statuses = [_result_health(ev_result)[0], _result_health(dyj_result)[0]]
-    flag = "⚠️ " if any(s != "OK" for s in statuses) else ""
+    subject = f"🎯 Daily Picks Report — {date_str}"
+    header = f"🎯 DAILY PICKS REPORT — {date_str}"
 
-    subject = f"{flag}🏀 WNBA Picks Report — {date_str}"
-
-    header = f"🏀 WNBA PICKS REPORT — {date_str}"
-    ev_block = _format_channel_block(ev_result)
-    dyj_block = _format_channel_block(dyj_result)
-    footer = f"{DIVIDER}\n⏱ Generated {ts_str}"
-    body = "\n\n".join([header, ev_block, dyj_block, footer])
+    parts = [header, *[_format_channel_block(r) for r in results]]
+    if notes:
+        parts.append(f"{DIVIDER}\nℹ️ " + "\n".join(notes))
+    parts.append(f"{DIVIDER}\n⏱ Generated {ts_str}")
+    body = "\n\n".join(parts)
 
     return subject, body
 
 
 def main() -> None:
     _check_secrets()
-    logger.info("Starting WNBA picks pipeline")
+    logger.info("Starting daily picks pipeline")
 
-    ev_spec = dict(
-        channel_id=EV_CHANNEL_ID,
-        channel_label="EV",
-        channel_name="Guy Boston Sports (WNBA)",
-        filter_fn=wnba_filter,
-        score_fn=wnba_score,
-        allowed_domains=EV_PICKS_DOMAINS,
-    )
-    dyj_spec = dict(
-        channel_id=DYJ_CHANNEL_ID,
-        channel_label="DYJ",
-        channel_name="Do Your Job Sports (WNBA)",
-        filter_fn=wnba_filter,
-        score_fn=wnba_score,
-        allowed_domains=None,
-    )
+    # Each source: (label, required, pipeline kwargs).
+    #  - required sources (the two WNBA channels) must be OK or the email is
+    #    blocked — you never get a partial/misleading report.
+    #  - optional sources (Guy Boston's World Cup video) are additive: shown when
+    #    OK, quietly skipped when there's no fresh video (e.g. once the World Cup
+    #    is over), and noted but never shown broken if they fail.
+    sources = [
+        ("WNBA-EV", True, dict(
+            channel_id=EV_CHANNEL_ID,
+            channel_label="EV",
+            channel_name="Guy Boston Sports (WNBA)",
+            filter_fn=wnba_filter,
+            score_fn=picks_score,
+            allowed_domains=EV_PICKS_DOMAINS,
+        )),
+        ("WNBA-DYJ", True, dict(
+            channel_id=DYJ_CHANNEL_ID,
+            channel_label="DYJ",
+            channel_name="Do Your Job Sports (WNBA)",
+            filter_fn=wnba_filter,
+            score_fn=picks_score,
+            allowed_domains=None,
+        )),
+        ("WC-EV", False, dict(
+            channel_id=EV_CHANNEL_ID,
+            channel_label="EV-WC",
+            channel_name="Guy Boston Sports (World Cup)",
+            filter_fn=world_cup_filter,
+            score_fn=picks_score,
+            allowed_domains=EV_PICKS_DOMAINS,
+        )),
+    ]
 
-    ev_result = _process_channel_resilient(ev_spec)
-    dyj_result = _process_channel_resilient(dyj_spec)
+    processed = []  # (label, required, result, status, note)
+    for label, required, spec in sources:
+        result = _process_channel_resilient(spec)
+        status, note = _result_health(result)
+        processed.append((label, required, result, status, note))
 
-    # Hard guardrail: only send when BOTH channels are OK. Anything else blocks
-    # the email so you never get a misleading or partial report.
+    # Required-source guardrail: only send when every required source is OK.
     #   - DEGRADED (a video existed but couldn't be processed) → block + exit 1
     #     so the run goes red and you're alerted that something broke.
     #   - EMPTY (no fresh video — off-day or not posted yet) → block + exit 0,
     #     since nothing actually broke; there's just nothing to report.
-    health = {
-        "EV": _result_health(ev_result),
-        "DYJ": _result_health(dyj_result),
-    }
-    not_ok = {label: (status, note) for label, (status, note) in health.items() if status != "OK"}
-    if not_ok:
-        for label, (status, note) in not_ok.items():
-            logger.error("[%s] %s: %s", label, status, note)
-        has_degraded = any(status == "DEGRADED" for status, _ in not_ok.values())
-        logger.error(
-            "Email blocked — report incomplete (need both channels OK). No report sent."
-        )
+    required_bad = [(lbl, st, nt) for lbl, req, _, st, nt in processed if req and st != "OK"]
+    if required_bad:
+        for lbl, st, nt in required_bad:
+            logger.error("[%s] %s: %s", lbl, st, nt)
+        has_degraded = any(st == "DEGRADED" for _, st, _ in required_bad)
+        logger.error("Email blocked — required source(s) not OK. No report sent.")
         sys.exit(1 if has_degraded else 0)
 
-    subject, body = build_report(ev_result, dyj_result)
+    # Show every source that produced a clean result; note (but don't show)
+    # optional sources that had a video but failed to summarize.
+    to_show = [result for _, _, result, st, _ in processed if st == "OK"]
+    notes = [
+        f"{result['channel_name']}: video found but could not be summarized — skipped."
+        for _, req, result, st, _ in processed
+        if not req and st == "DEGRADED"
+    ]
+
+    subject, body = build_report(to_show, notes)
     logger.info("Report built (%d chars)", len(body))
 
     send_email(subject, body)

@@ -2,7 +2,21 @@
 
 Automated daily WNBA picks report emailed at 12:00 AM Philippine Time.
 
-Fetches the latest WNBA picks videos from **Guy Boston Sports (`@GuyBostonSports`)** and **Do Your Job Sports (`@DoYourJobSports`)**, extracts transcripts, scrapes pinned comment pick sheets, summarizes via Gemini, and sends a consolidated report.
+Fetches the latest picks videos, extracts transcripts, scrapes pinned comment
+pick sheets, summarizes via Gemini, and sends a consolidated report.
+
+Sources:
+
+| Source | Channel | Content | Required? |
+|---|---|---|---|
+| WNBA-EV | Guy Boston Sports (`@GuyBostonSports`) | WNBA | required |
+| WNBA-DYJ | Do Your Job Sports (`@DoYourJobSports`) | WNBA | required |
+| WC-EV | Guy Boston Sports (`@GuyBostonSports`) | FIFA World Cup | optional |
+
+Required sources must produce a clean result or the email is blocked (see
+Guardrails). The optional World Cup source is **additive**: it's included when a
+fresh video exists and silently dropped otherwise (e.g. once the tournament
+ends), so it never blocks the WNBA report.
 
 ---
 
@@ -93,21 +107,23 @@ Runs daily at **4:00 PM UTC = 12:00 AM Philippine Time (PHT)**.
 
 ## Reliability / Guardrails
 
-The email is sent **only when both channels are OK** — you never get a
+The email is sent **only when every required source is OK** — you never get a
 misleading, partial, or stale report.
 
-- Each channel is classified **OK** (clean summary), **EMPTY** (no fresh video),
+- Each source is classified **OK** (clean summary), **EMPTY** (no fresh video),
   or **DEGRADED** (a video existed but couldn't be turned into a usable
   summary — e.g. the AI fell back to a raw transcript excerpt, or no
   transcript/picks sheet could be retrieved).
-- A **DEGRADED** channel triggers a full pipeline re-run (up to 3 attempts with
+- A **DEGRADED** source triggers a full pipeline re-run (up to 3 attempts with
   backoff).
-- If, after retries, **either channel is not OK**, the email is **blocked
+- If, after retries, a **required** source is not OK, the email is **blocked
   entirely**:
   - **DEGRADED** (something broke) → job exits non-zero, so the GitHub Actions
     run goes **red** and you're alerted. Enable Actions failure notifications.
   - **EMPTY** (off-day or today's video not posted yet) → job exits zero (no
     email, but not a failure — there was simply nothing to report).
+- **Optional** sources never block: shown when OK, silently skipped when EMPTY,
+  and noted (but never shown broken) when DEGRADED.
 
 ### Freshness (no stale videos)
 

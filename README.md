@@ -107,8 +107,9 @@ Runs daily at **4:00 PM UTC = 12:00 AM Philippine Time (PHT)**.
 
 ## Reliability / Guardrails
 
-The email is sent **only when every required source is OK** — you never get a
-misleading, partial, or stale report.
+The email is sent whenever **at least one source has clean content** — you get
+the good picks even if another channel didn't post, but you never see broken or
+stale content.
 
 - Each source is classified **OK** (clean summary), **EMPTY** (no fresh video),
   or **DEGRADED** (a video existed but couldn't be turned into a usable
@@ -116,14 +117,14 @@ misleading, partial, or stale report.
   transcript/picks sheet could be retrieved).
 - A **DEGRADED** source triggers a full pipeline re-run (up to 3 attempts with
   backoff).
-- If, after retries, a **required** source is not OK, the email is **blocked
-  entirely**:
-  - **DEGRADED** (something broke) → job exits non-zero, so the GitHub Actions
+- After retries, each source is handled uniformly:
+  - **OK** → shown in the report.
+  - **EMPTY** / **DEGRADED** → omitted and listed transparently under
+    "Not included today", so you always know what was checked.
+- The email is only **skipped** when *no* source is OK:
+  - all **EMPTY** (true off-day) → exit 0 (clean no-op, no email).
+  - at least one **DEGRADED** and none OK → exit non-zero, so the GitHub Actions
     run goes **red** and you're alerted. Enable Actions failure notifications.
-  - **EMPTY** (off-day or today's video not posted yet) → job exits zero (no
-    email, but not a failure — there was simply nothing to report).
-- **Optional** sources never block: shown when OK, silently skipped when EMPTY,
-  and noted (but never shown broken) when DEGRADED.
 
 ### Freshness (no stale videos)
 

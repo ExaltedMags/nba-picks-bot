@@ -179,8 +179,14 @@ def _format_channel_block(result: dict) -> str:
     return "\n".join(lines)
 
 
-def build_report(results: list[dict], notes: Optional[list[str]] = None) -> tuple[str, str]:
-    """Return (subject, body) for the email from the channel results to show."""
+def build_report(results: list[dict], skipped: Optional[list[tuple[str, str]]] = None) -> tuple[str, str]:
+    """
+    Return (subject, body) for the email.
+
+    `results` are the OK channel results to show; `skipped` is a list of
+    (channel_name, reason) for sources that were checked but not included, listed
+    transparently so the recipient always knows the full picture.
+    """
     pht_tz = pytz.timezone(PHT)
     now_pht = datetime.now(pht_tz)
     date_str = now_pht.strftime("%B %d, %Y")
@@ -190,8 +196,10 @@ def build_report(results: list[dict], notes: Optional[list[str]] = None) -> tupl
     header = f"🎯 DAILY PICKS REPORT — {date_str}"
 
     parts = [header, *[_format_channel_block(r) for r in results]]
-    if notes:
-        parts.append(f"{DIVIDER}\nℹ️ " + "\n".join(notes))
+    if skipped:
+        lines = ["ℹ️ Not included today:"]
+        lines += [f"• {name} — {reason}" for name, reason in skipped]
+        parts.append(f"{DIVIDER}\n" + "\n".join(lines))
     parts.append(f"{DIVIDER}\n⏱ Generated {ts_str}")
     body = "\n\n".join(parts)
 
@@ -202,68 +210,63 @@ def main() -> None:
     _check_secrets()
     logger.info("Starting daily picks pipeline")
 
-    # Each source: (label, required, pipeline kwargs).
-    #  - required sources (the two WNBA channels) must be OK or the email is
-    #    blocked — you never get a partial/misleading report.
-    #  - optional sources (Guy Boston's World Cup video) are additive: shown when
-    #    OK, quietly skipped when there's no fresh video (e.g. once the World Cup
-    #    is over), and noted but never shown broken if they fail.
     sources = [
-        ("WNBA-EV", True, dict(
+        dict(
             channel_id=EV_CHANNEL_ID,
             channel_label="EV",
             channel_name="Guy Boston Sports (WNBA)",
             filter_fn=wnba_filter,
             score_fn=picks_score,
             allowed_domains=EV_PICKS_DOMAINS,
-        )),
-        ("WNBA-DYJ", True, dict(
+        ),
+        dict(
             channel_id=DYJ_CHANNEL_ID,
             channel_label="DYJ",
             channel_name="Do Your Job Sports (WNBA)",
             filter_fn=wnba_filter,
             score_fn=picks_score,
             allowed_domains=None,
-        )),
-        ("WC-EV", False, dict(
+        ),
+        dict(
             channel_id=EV_CHANNEL_ID,
             channel_label="EV-WC",
             channel_name="Guy Boston Sports (World Cup)",
             filter_fn=world_cup_filter,
             score_fn=picks_score,
             allowed_domains=EV_PICKS_DOMAINS,
-        )),
+        ),
     ]
 
-    processed = []  # (label, required, result, status, note)
-    for label, required, spec in sources:
+    processed = []  # (result, status, note)
+    for spec in sources:
         result = _process_channel_resilient(spec)
         status, note = _result_health(result)
-        processed.append((label, required, result, status, note))
+        processed.append((result, status, note))
 
-    # Required-source guardrail: only send when every required source is OK.
-    #   - DEGRADED (a video existed but couldn't be processed) → block + exit 1
-    #     so the run goes red and you're alerted that something broke.
-    #   - EMPTY (no fresh video — off-day or not posted yet) → block + exit 0,
-    #     since nothing actually broke; there's just nothing to report.
-    required_bad = [(lbl, st, nt) for lbl, req, _, st, nt in processed if req and st != "OK"]
-    if required_bad:
-        for lbl, st, nt in required_bad:
-            logger.error("[%s] %s: %s", lbl, st, nt)
-        has_degraded = any(st == "DEGRADED" for _, st, _ in required_bad)
-        logger.error("Email blocked — required source(s) not OK. No report sent.")
-        sys.exit(1 if has_degraded else 0)
-
-    # Show every source that produced a clean result; note (but don't show)
-    # optional sources that had a video but failed to summarize.
-    to_show = [result for _, _, result, st, _ in processed if st == "OK"]
-    notes = [
-        f"{result['channel_name']}: video found but could not be summarized — skipped."
-        for _, req, result, st, _ in processed
-        if not req and st == "DEGRADED"
+    # Send whenever at least one source produced clean content. Every source is
+    # treated the same:
+    #   - OK       → shown.
+    #   - EMPTY    → omitted, listed transparently in "Not included today".
+    #   - DEGRADED → omitted (never shown broken), also listed there.
+    to_show = [result for result, st, _ in processed if st == "OK"]
+    skipped = [
+        (result["channel_name"], note) for result, st, note in processed if st != "OK"
     ]
+    for result, st, note in processed:
+        if st != "OK":
+            logger.warning("[%s] %s: %s", result["channel_name"], st, note)
 
-    subject, body = build_report(to_show, notes)
+    if not to_show:
+        # Nothing usable. Fail loudly only if something actually broke; a pure
+        # off-day (everything EMPTY) is a clean no-op.
+        has_degraded = any(st == "DEGRADED" for _, st, _ in processed)
+        if has_degraded:
+            logger.error("No usable content and a source broke. No email sent.")
+            sys.exit(1)
+        logger.info("No fresh videos for any source today. No email sent.")
+        sys.exit(0)
+
+    subject, body = build_report(to_show, skipped)
     logger.info("Report built (%d chars)", len(body))
 
     send_email(subject, body)

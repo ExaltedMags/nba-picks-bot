@@ -7,16 +7,15 @@ pick sheets, summarizes via Gemini, and sends a consolidated report.
 
 Sources:
 
-| Source | Channel | Content | Required? |
-|---|---|---|---|
-| WNBA-EV | Guy Boston Sports (`@GuyBostonSports`) | WNBA | required |
-| WNBA-DYJ | Do Your Job Sports (`@DoYourJobSports`) | WNBA | required |
-| WC-EV | Guy Boston Sports (`@GuyBostonSports`) | FIFA World Cup | optional |
+| Source | Channel | Content |
+|---|---|---|
+| WNBA-EV | Guy Boston Sports (`@GuyBostonSports`) | WNBA |
+| WC-EV | Guy Boston Sports (`@GuyBostonSports`) | FIFA World Cup |
+| WC-F90 | thefull90 (`@thefull90`) | FIFA World Cup |
 
-Required sources must produce a clean result or the email is blocked (see
-Guardrails). The optional World Cup source is **additive**: it's included when a
-fresh video exists and silently dropped otherwise (e.g. once the tournament
-ends), so it never blocks the WNBA report.
+Every source is **additive**: it's included when a fresh video exists and
+silently dropped otherwise (e.g. once the tournament ends). The email is sent
+whenever at least one source has clean content (see Guardrails).
 
 ---
 
@@ -40,7 +39,8 @@ ends), so it never blocks the WNBA report.
 YouTube channel IDs are not always in the URL. To find them:
 - Go to the channel page → view page source (Ctrl+U) → search for `"channelId"` or `"externalId"` (a `UC…` string)
 - For `@GuyBostonSports`: visit `https://www.youtube.com/@GuyBostonSports`
-- For `@DoYourJobSports`: visit `https://www.youtube.com/@DoYourJobSports`
+- `@thefull90` is already wired in as a default (`FULL90_CHANNEL_ID`); only set
+  the secret if you need to override it.
 
 ### 5. Add GitHub Secrets
 Push this repo to GitHub, then go to **Settings → Secrets and variables → Actions** and add:
@@ -54,7 +54,7 @@ Push this repo to GitHub, then go to **Settings → Secrets and variables → Ac
 | `GMAIL_APP_PASSWORD` | Gmail app password |
 | `REPORT_RECIPIENT` | Email address to receive the report |
 | `EV_CHANNEL_ID` | Guy Boston Sports channel ID (from step 4) |
-| `DYJ_CHANNEL_ID` | Do Your Job Sports channel ID (from step 4) |
+| `FULL90_CHANNEL_ID` | Optional — overrides the built-in thefull90 channel ID |
 | `HTTP_PROXY_URL` | Optional proxy URL for scraping |
 
 ### 6. Test the workflow
@@ -74,7 +74,7 @@ export GMAIL_SENDER=...
 export GMAIL_APP_PASSWORD=...
 export REPORT_RECIPIENT=...
 export EV_CHANNEL_ID=...
-export DYJ_CHANNEL_ID=...
+# export FULL90_CHANNEL_ID=...   # optional; defaults to thefull90's channel
 
 python main.py
 ```

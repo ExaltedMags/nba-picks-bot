@@ -9,9 +9,9 @@ from typing import Optional
 import pytz
 
 from config import (
-    DYJ_CHANNEL_ID,
     EV_CHANNEL_ID,
     EV_PICKS_DOMAINS,
+    FULL90_CHANNEL_ID,
     GEMINI_API_KEY,
     GMAIL_APP_PASSWORD,
     GMAIL_SENDER,
@@ -220,10 +220,10 @@ def main() -> None:
             allowed_domains=EV_PICKS_DOMAINS,
         ),
         dict(
-            channel_id=DYJ_CHANNEL_ID,
-            channel_label="DYJ",
-            channel_name="Do Your Job Sports (WNBA)",
-            filter_fn=wnba_filter,
+            channel_id=FULL90_CHANNEL_ID,
+            channel_label="F90-WC",
+            channel_name="thefull90 (World Cup)",
+            filter_fn=world_cup_filter,
             score_fn=picks_score,
             allowed_domains=None,
         ),

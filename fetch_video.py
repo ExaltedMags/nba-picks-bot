@@ -11,22 +11,58 @@ from config import YOUTUBE_API_KEY, MAX_VIDEO_AGE_HOURS
 
 logger = logging.getLogger(__name__)
 
-SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
+
+# How many recent uploads to pull from a channel's uploads playlist. We read the
+# uploads playlist instead of search.list because search.list's index lags
+# uploads by minutes-to-hours, which was silently dropping videos posted shortly
+# before the run (e.g. a World Cup picks video uploaded ~1h before the 16:00 UTC
+# run never appeared). The uploads playlist reflects new videos in real time and
+# is returned newest-first; 50 comfortably spans the freshness window even for
+# high-volume channels.
+_MAX_UPLOADS = 50
 
 
-def _search(channel_id: str, published_after: str) -> list[dict]:
+def _uploads_playlist_id(channel_id: str) -> str:
+    """A channel's uploads playlist ID is its channel ID with the 'UC' prefix
+    swapped for 'UU' — a stable YouTube convention that avoids an extra
+    channels.list call."""
+    if channel_id.startswith("UC"):
+        return "UU" + channel_id[2:]
+    return channel_id
+
+
+def _list_recent_uploads(channel_id: str) -> list[dict]:
+    """Return the channel's most-recent uploads (newest first), normalized to the
+    same shape fetch_latest_video expects (id.videoId, snippet.title,
+    snippet.publishedAt)."""
     params = {
         "key": YOUTUBE_API_KEY,
-        "channelId": channel_id,
-        "part": "snippet",
-        "order": "date",
-        "type": "video",
-        "publishedAfter": published_after,
-        "maxResults": 10,
+        "playlistId": _uploads_playlist_id(channel_id),
+        "part": "snippet,contentDetails",
+        "maxResults": _MAX_UPLOADS,
     }
-    resp = requests.get(SEARCH_URL, params=params, timeout=30)
+    resp = requests.get(PLAYLIST_ITEMS_URL, params=params, timeout=30)
     resp.raise_for_status()
-    return resp.json().get("items", [])
+
+    normalized: list[dict] = []
+    for item in resp.json().get("items", []):
+        snippet = item.get("snippet", {})
+        details = item.get("contentDetails", {})
+        video_id = details.get("videoId") or snippet.get("resourceId", {}).get("videoId")
+        if not video_id:
+            continue
+        # videoPublishedAt is the true upload time; snippet.publishedAt is when
+        # the item was added to the uploads playlist (effectively identical, but
+        # prefer the former when present).
+        published_at = details.get("videoPublishedAt") or snippet.get("publishedAt")
+        normalized.append(
+            {
+                "id": {"videoId": video_id},
+                "snippet": {"title": snippet.get("title", ""), "publishedAt": published_at},
+            }
+        )
+    return normalized
 
 
 def _parse_published(value: str) -> Optional[datetime]:
@@ -58,17 +94,16 @@ def fetch_latest_video(
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=max_age_hours)
-    published_after = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     try:
-        items = _search(channel_id, published_after)
+        items = _list_recent_uploads(channel_id)
     except requests.RequestException as exc:
-        logger.error("YouTube search failed for %s: %s", channel_label, exc)
+        logger.error("YouTube uploads fetch failed for %s: %s", channel_label, exc)
         return None
 
-    # Keep only videos that pass the filter AND are genuinely within the window.
-    # (publishedAfter already filters server-side; the explicit check guards
-    # against any edge cases and lets us log the real age.)
+    # Keep only videos that pass the filter AND are within the freshness window.
+    # The uploads playlist isn't filtered server-side, so this cutoff check is the
+    # sole freshness gate (and lets us log the real age).
     matches: list[tuple[dict, datetime]] = []
     for item in items:
         title = item["snippet"]["title"]

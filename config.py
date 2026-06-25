@@ -5,8 +5,12 @@ import os
 # FULL90 = thefull90 (@thefull90) — FIFA World Cup picks
 # Channel IDs are public (not secrets), so FULL90 defaults to the real ID and
 # only needs an env override if the channel ever changes.
-EV_CHANNEL_ID = os.environ.get("EV_CHANNEL_ID", "UCxxxxxxxxxxxxxxxxxxxxxxxxxx")
-FULL90_CHANNEL_ID = os.environ.get("FULL90_CHANNEL_ID", "UCbcQP0aVkJp1SqBn0uYJpmw")
+# Use `or` rather than get()'s default so an env var that is *set but empty* —
+# e.g. the workflow passing ${{ secrets.FULL90_CHANNEL_ID }} when that secret
+# isn't defined, which GitHub injects as "" — falls back to the default instead
+# of overriding it with an empty string (which yields an empty playlistId → 400).
+EV_CHANNEL_ID = os.environ.get("EV_CHANNEL_ID") or "UCxxxxxxxxxxxxxxxxxxxxxxxxxx"
+FULL90_CHANNEL_ID = os.environ.get("FULL90_CHANNEL_ID") or "UCbcQP0aVkJp1SqBn0uYJpmw"
 
 # API credentials from environment
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")

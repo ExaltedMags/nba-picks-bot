@@ -7,7 +7,7 @@ from typing import Optional
 
 from supadata import Supadata
 
-from config import SUPADATA_API_KEY
+from config import SUPADATA_API_KEY, SUPADATA_API_KEY_2
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,11 @@ logger = logging.getLogger(__name__)
 _RETRY_DELAYS = [5, 15, 30]
 
 
-def _fetch_transcript(client: Supadata, video_id: str):
+def _is_limit_exceeded(exc: Exception) -> bool:
+    return "limit-exceeded" in str(exc).lower()
+
+
+def _fetch_transcript(client: Supadata, video_id: str, fallback_key: Optional[str] = None):
     last_exc: Optional[Exception] = None
     for attempt, delay in enumerate([0] + _RETRY_DELAYS):
         if delay:
@@ -27,6 +31,10 @@ def _fetch_transcript(client: Supadata, video_id: str):
         except Exception as exc:  # noqa: BLE001 — SDK raises several error types
             last_exc = exc
             logger.warning("Transcript attempt %d failed for %s: %s", attempt + 1, video_id, exc)
+            if _is_limit_exceeded(exc) and fallback_key:
+                logger.info("Primary key limit exceeded — switching to backup key for %s", video_id)
+                fallback_client = Supadata(api_key=fallback_key)
+                return _fetch_transcript(fallback_client, video_id, fallback_key=None)
             continue
         if result and result.content:
             return result
@@ -43,7 +51,7 @@ def get_transcript(video_id: str) -> Optional[str]:
         return None
 
     client = Supadata(api_key=SUPADATA_API_KEY)
-    result = _fetch_transcript(client, video_id)
+    result = _fetch_transcript(client, video_id, fallback_key=SUPADATA_API_KEY_2 or None)
     if not result or not result.content:
         return None
 

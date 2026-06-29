@@ -16,6 +16,7 @@ FULL90_CHANNEL_ID = os.environ.get("FULL90_CHANNEL_ID") or "UCbcQP0aVkJp1SqBn0uY
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SUPADATA_API_KEY = os.environ.get("SUPADATA_API_KEY")
+SUPADATA_API_KEY_2 = os.environ.get("SUPADATA_API_KEY_2")
 
 # Email delivery
 GMAIL_SENDER = os.environ.get("GMAIL_SENDER")

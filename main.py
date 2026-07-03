@@ -22,6 +22,7 @@ from config import (
 from fetch_video import fetch_latest_video, picks_score, wnba_filter, world_cup_filter
 from get_pinned_comment import get_pinned_comment_url
 from get_transcript import get_transcript
+from render_report import render_html, render_text
 from scrape_picks import scrape_picks_page
 from send_email import send_email
 from summarize import summarize_with_gemini
@@ -32,8 +33,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
-
-DIVIDER = "━" * 25
 
 # Full-pipeline retry policy: re-run a channel that produced DEGRADED output
 # (e.g. the AI fell back to a raw excerpt) before giving up on it.
@@ -117,11 +116,11 @@ def _result_health(result: dict) -> tuple[str, str]:
     if result["error"]:
         return "EMPTY", result["error"]
 
-    summary = (result["summary"] or "").strip()
-    if not summary:
+    summary = result["summary"] or {}
+    if not isinstance(summary, dict) or (not summary.get("picks") and not summary.get("no_picks") and not summary.get("degraded")):
         return "DEGRADED", "AI summary missing."
-    if summary.startswith("(Gemini unavailable"):
-        return "DEGRADED", "AI summary failed; only a raw excerpt is available."
+    if summary.get("degraded"):
+        return "DEGRADED", summary["degraded"]
     if not result["transcript"] and not result["scraped_picks"]:
         return "DEGRADED", "No transcript or picks sheet could be retrieved."
     return "OK", ""
@@ -146,42 +145,11 @@ def _process_channel_resilient(spec: dict) -> dict:
     return result
 
 
-def _format_channel_block(result: dict) -> str:
-    icon = "📺"
-    name = result["channel_name"]
-    lines = [DIVIDER, f"{icon} {name}", DIVIDER]
-
-    if result["error"]:
-        lines.append(f"⚠️ {result['error']}")
-        return "\n".join(lines)
-
-    status, note = _result_health(result)
-    if status != "OK":
-        lines.append(f"⚠️ [{status}] {note}")
-
-    video = result["video"]
-    lines.append(f"🎬 {video['title']}")
-    lines.append(f"🔗 {video['url']}")
-    lines.append("")
-
-    summary = result["summary"] or "(AI summary unavailable.)"
-    lines.append(summary)
-
-    lines.append("")
-    lines.append("📋 PINNED PICKS SHEET:")
-    if result["scraped_picks"]:
-        lines.append(result["scraped_picks"])
-    elif result["picks_url"]:
-        lines.append(f"(Could not scrape: {result['picks_url']})")
-    else:
-        lines.append("Not found.")
-
-    return "\n".join(lines)
-
-
-def build_report(results: list[dict], skipped: Optional[list[tuple[str, str]]] = None) -> tuple[str, str]:
+def build_report(
+    results: list[dict], skipped: Optional[list[tuple[str, str]]] = None
+) -> tuple[str, str, str]:
     """
-    Return (subject, body) for the email.
+    Return (subject, text_body, html_body) for the email.
 
     `results` are the OK channel results to show; `skipped` is a list of
     (channel_name, reason) for sources that were checked but not included, listed
@@ -193,17 +161,10 @@ def build_report(results: list[dict], skipped: Optional[list[tuple[str, str]]] =
     ts_str = now_pht.strftime("%Y-%m-%d %H:%M PHT")
 
     subject = f"🎯 Daily Picks Report — {date_str}"
-    header = f"🎯 DAILY PICKS REPORT — {date_str}"
+    text_body = render_text(results, skipped, date_str, ts_str)
+    html_body = render_html(results, skipped, date_str, ts_str)
 
-    parts = [header, *[_format_channel_block(r) for r in results]]
-    if skipped:
-        lines = ["ℹ️ Not included today:"]
-        lines += [f"• {name} — {reason}" for name, reason in skipped]
-        parts.append(f"{DIVIDER}\n" + "\n".join(lines))
-    parts.append(f"{DIVIDER}\n⏱ Generated {ts_str}")
-    body = "\n\n".join(parts)
-
-    return subject, body
+    return subject, text_body, html_body
 
 
 def main() -> None:
@@ -266,10 +227,10 @@ def main() -> None:
         logger.info("No fresh videos for any source today. No email sent.")
         sys.exit(0)
 
-    subject, body = build_report(to_show, skipped)
-    logger.info("Report built (%d chars)", len(body))
+    subject, text_body, html_body = build_report(to_show, skipped)
+    logger.info("Report built (%d chars text, %d chars html)", len(text_body), len(html_body))
 
-    send_email(subject, body)
+    send_email(subject, text_body, html_body)
     logger.info("Report emailed to %s", REPORT_RECIPIENT)
 
 

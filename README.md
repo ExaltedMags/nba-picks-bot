@@ -91,8 +91,9 @@ nba-picks-bot/
 ├── get_transcript.py                  # Supadata transcript extraction + cleaning
 ├── get_pinned_comment.py              # YouTube API: pinned comment URL extraction
 ├── scrape_picks.py                    # Jina Reader article scraper
-├── summarize.py                       # Gemini API call + prompt
-├── send_email.py                      # Gmail SMTP delivery
+├── summarize.py                       # Gemini API call (structured JSON picks)
+├── render_report.py                   # Email rendering: HTML + plain-text bodies
+├── send_email.py                      # Gmail SMTP delivery (multipart: HTML + text)
 ├── config.py                          # Channel IDs, team names, filter logic
 └── requirements.txt
 ```

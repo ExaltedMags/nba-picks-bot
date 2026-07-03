@@ -3,7 +3,9 @@
 import logging
 import smtplib
 import ssl
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from typing import Optional
 
 from config import GMAIL_APP_PASSWORD, GMAIL_SENDER, REPORT_RECIPIENT
 
@@ -13,8 +15,16 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 
 
-def send_email(subject: str, body: str) -> None:
-    msg = MIMEText(body, "plain", "utf-8")
+def send_email(subject: str, text_body: str, html_body: Optional[str] = None) -> None:
+    if html_body:
+        # multipart/alternative: clients render the HTML part and fall back to
+        # the plain-text part; order matters (last part = preferred).
+        msg = MIMEMultipart("alternative")
+        msg.attach(MIMEText(text_body, "plain", "utf-8"))
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+    else:
+        msg = MIMEText(text_body, "plain", "utf-8")
+
     msg["Subject"] = subject
     msg["From"] = GMAIL_SENDER
     msg["To"] = REPORT_RECIPIENT

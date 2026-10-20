@@ -1,4 +1,4 @@
-"""WNBA Picks Automation — daily orchestrator."""
+"""NBA Picks Automation — daily orchestrator."""
 
 import logging
 import sys
@@ -9,9 +9,9 @@ from typing import Optional
 import pytz
 
 from config import (
+    DAFT_CHANNEL_ID,
     EV_CHANNEL_ID,
     EV_PICKS_DOMAINS,
-    FULL90_CHANNEL_ID,
     GEMINI_API_KEY,
     GMAIL_APP_PASSWORD,
     GMAIL_SENDER,
@@ -19,7 +19,7 @@ from config import (
     REPORT_RECIPIENT,
     YOUTUBE_API_KEY,
 )
-from fetch_video import fetch_latest_video, picks_score, wnba_filter, world_cup_filter
+from fetch_video import fetch_latest_video, nba_filter, picks_score
 from get_pinned_comment import get_pinned_comment_url
 from get_transcript import get_transcript
 from render_report import render_html, render_text
@@ -87,7 +87,11 @@ def _process_channel(
 
     result["transcript"] = get_transcript(video["video_id"])
 
-    picks_url = get_pinned_comment_url(video["video_id"], channel_id, allowed_domains)
+    # Only sources with a known picks-sheet domain look at the pinned comment;
+    # for the rest it's typically sportsbook/affiliate links, not picks.
+    picks_url = None
+    if allowed_domains:
+        picks_url = get_pinned_comment_url(video["video_id"], channel_id, allowed_domains)
     result["picks_url"] = picks_url
 
     if picks_url:
@@ -175,26 +179,18 @@ def main() -> None:
         dict(
             channel_id=EV_CHANNEL_ID,
             channel_label="EV",
-            channel_name="Guy Boston Sports (WNBA)",
-            filter_fn=wnba_filter,
+            channel_name="Guy Boston Sports (NBA)",
+            filter_fn=nba_filter,
             score_fn=picks_score,
             allowed_domains=EV_PICKS_DOMAINS,
         ),
         dict(
-            channel_id=FULL90_CHANNEL_ID,
-            channel_label="F90-WC",
-            channel_name="thefull90 (World Cup)",
-            filter_fn=world_cup_filter,
+            channel_id=DAFT_CHANNEL_ID,
+            channel_label="DAFT",
+            channel_name="Daft Previews (NBA)",
+            filter_fn=nba_filter,
             score_fn=picks_score,
             allowed_domains=None,
-        ),
-        dict(
-            channel_id=EV_CHANNEL_ID,
-            channel_label="EV-WC",
-            channel_name="Guy Boston Sports (World Cup)",
-            filter_fn=world_cup_filter,
-            score_fn=picks_score,
-            allowed_domains=EV_PICKS_DOMAINS,
         ),
     ]
 

@@ -1,6 +1,6 @@
-# WNBA Picks Bot
+# NBA Picks Bot
 
-Automated daily WNBA picks report emailed at 12:00 AM Philippine Time.
+Automated daily NBA picks report emailed at 12:00 AM Philippine Time.
 
 Fetches the latest picks videos, extracts transcripts, scrapes pinned comment
 pick sheets, summarizes via Gemini, and sends a consolidated report.
@@ -9,12 +9,11 @@ Sources:
 
 | Source | Channel | Content |
 |---|---|---|
-| WNBA-EV | Guy Boston Sports (`@GuyBostonSports`) | WNBA |
-| WC-EV | Guy Boston Sports (`@GuyBostonSports`) | FIFA World Cup |
-| WC-F90 | thefull90 (`@thefull90`) | FIFA World Cup |
+| EV | Guy Boston Sports (`@GuyBostonSports`) | NBA picks (video + guybostonsports.com sheet) |
+| DAFT | Daft Previews (`@daftpreviews`) | NBA best bets / player props (video only) |
 
 Every source is **additive**: it's included when a fresh video exists and
-silently dropped otherwise (e.g. once the tournament ends). The email is sent
+silently dropped otherwise (e.g. an off-day). The email is sent
 whenever at least one source has clean content (see Guardrails).
 
 ---
@@ -39,8 +38,8 @@ whenever at least one source has clean content (see Guardrails).
 YouTube channel IDs are not always in the URL. To find them:
 - Go to the channel page → view page source (Ctrl+U) → search for `"channelId"` or `"externalId"` (a `UC…` string)
 - For `@GuyBostonSports`: visit `https://www.youtube.com/@GuyBostonSports`
-- `@thefull90` is already wired in as a default (`FULL90_CHANNEL_ID`); only set
-  the secret if you need to override it.
+- Both channel IDs are wired in as defaults; only set `EV_CHANNEL_ID` /
+  `DAFT_CHANNEL_ID` if you need to override them.
 
 ### 5. Add GitHub Secrets
 Push this repo to GitHub, then go to **Settings → Secrets and variables → Actions** and add:
@@ -53,12 +52,12 @@ Push this repo to GitHub, then go to **Settings → Secrets and variables → Ac
 | `GMAIL_SENDER` | Gmail address that sends the report |
 | `GMAIL_APP_PASSWORD` | Gmail app password |
 | `REPORT_RECIPIENT` | Email address to receive the report |
-| `EV_CHANNEL_ID` | Guy Boston Sports channel ID (from step 4) |
-| `FULL90_CHANNEL_ID` | Optional — overrides the built-in thefull90 channel ID |
+| `EV_CHANNEL_ID` | Optional — overrides the built-in Guy Boston Sports channel ID |
+| `DAFT_CHANNEL_ID` | Optional — overrides the built-in Daft Previews channel ID |
 | `HTTP_PROXY_URL` | Optional proxy URL for scraping |
 
 ### 6. Test the workflow
-Go to **Actions** tab → **WNBA Picks Daily Report** → **Run workflow**
+Go to **Actions** tab → **NBA Picks Daily Report** → **Run workflow**
 
 ---
 
@@ -73,8 +72,8 @@ export SUPADATA_API_KEY=...
 export GMAIL_SENDER=...
 export GMAIL_APP_PASSWORD=...
 export REPORT_RECIPIENT=...
-export EV_CHANNEL_ID=...
-# export FULL90_CHANNEL_ID=...   # optional; defaults to thefull90's channel
+# export EV_CHANNEL_ID=...     # optional
+# export DAFT_CHANNEL_ID=...   # optional
 
 python main.py
 ```

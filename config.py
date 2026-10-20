@@ -1,16 +1,16 @@
 import os
 
-# Channel IDs — update these after running the setup instructions in README.md
-# EV     = Guy Boston Sports (@GuyBostonSports)
-# FULL90 = thefull90 (@thefull90) — FIFA World Cup picks
-# Channel IDs are public (not secrets), so FULL90 defaults to the real ID and
-# only needs an env override if the channel ever changes.
+# Channel IDs
+# EV   = Guy Boston Sports (@GuyBostonSports)
+# DAFT = Daft Previews (@daftpreviews)
+# Channel IDs are public (not secrets), so both default to the real ID and only
+# need an env override if a channel ever changes.
 # Use `or` rather than get()'s default so an env var that is *set but empty* —
-# e.g. the workflow passing ${{ secrets.FULL90_CHANNEL_ID }} when that secret
+# e.g. the workflow passing ${{ secrets.EV_CHANNEL_ID }} when that secret
 # isn't defined, which GitHub injects as "" — falls back to the default instead
 # of overriding it with an empty string (which yields an empty playlistId → 400).
-EV_CHANNEL_ID = os.environ.get("EV_CHANNEL_ID") or "UCxxxxxxxxxxxxxxxxxxxxxxxxxx"
-FULL90_CHANNEL_ID = os.environ.get("FULL90_CHANNEL_ID") or "UCbcQP0aVkJp1SqBn0uYJpmw"
+EV_CHANNEL_ID = os.environ.get("EV_CHANNEL_ID") or "UCVtnLXbX0GeiV8CfM1-m_WA"
+DAFT_CHANNEL_ID = os.environ.get("DAFT_CHANNEL_ID") or "UCwvzzWorj_-_d792FUo3gmg"
 
 # API credentials from environment
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
@@ -41,15 +41,9 @@ MAX_VIDEO_AGE_HOURS = int(os.environ.get("MAX_VIDEO_AGE_HOURS", "22"))
 # Timezone
 PHT = "Asia/Manila"
 
-# WNBA team keywords for the picks filter
-WNBA_TEAM_NAMES = [
-    "Aces", "Liberty", "Sky", "Sun", "Fever", "Mystics", "Dream",
-    "Lynx", "Mercury", "Storm", "Sparks", "Wings", "Valkyries",
-]
-
-# Sports to exclude from the WNBA filter (matched on whole words, so "NBA"
-# excludes men's NBA without catching "WNBA").
-EXCLUDE_SPORTS = ["NBA", "NFL", "MLB", "CFB", "NCAAB", "NCAAF", "Soccer", "NHL", "Tennis", "UFC"]
+# Sports to exclude from the NBA filter (matched on whole words, so "NBA" never
+# matches inside "WNBA").
+EXCLUDE_SPORTS = ["WNBA", "NFL", "MLB", "CFB", "NCAAB", "NCAAF", "Soccer", "NHL", "Tennis", "UFC"]
 
 # Domains that indicate a valid picks article link in Ev's pinned comment
 EV_PICKS_DOMAINS = ["guybostonsports.com"]

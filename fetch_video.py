@@ -154,29 +154,17 @@ def _has_word(word: str, text: str) -> bool:
     return re.search(rf"\b{re.escape(word)}\b", text) is not None
 
 
-def wnba_filter(title: str) -> bool:
-    """Return True if the video title is about WNBA picks."""
-    from config import WNBA_TEAM_NAMES, EXCLUDE_SPORTS
+def nba_filter(title: str) -> bool:
+    """Return True if the video title is about NBA picks."""
+    from config import EXCLUDE_SPORTS
 
     t = title.upper()
 
-    # Drop videos for other sports (e.g. men's NBA, MLB) so we only keep WNBA.
+    # Drop videos for other sports (e.g. WNBA, NFL) so we only keep NBA.
     for sport in EXCLUDE_SPORTS:
         if _has_word(sport.upper(), t):
             return False
-
-    if "WNBA" in t:
-        return True
-    for team in WNBA_TEAM_NAMES:
-        if _has_word(team.upper(), t):
-            return True
-    return False
-
-
-def world_cup_filter(title: str) -> bool:
-    """Return True if the video title is about (FIFA) World Cup picks."""
-    t = title.upper()
-    return "WORLD CUP" in t or "FIFA" in t
+    return _has_word("NBA", t)
 
 
 def picks_score(title: str) -> int:

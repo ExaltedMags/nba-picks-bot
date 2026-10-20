@@ -21,7 +21,7 @@ SYSTEM_PROMPT = (
     '  "no_picks_stated": false,\n'
     '  "picks": [\n'
     "    {\n"
-    '      "game": "matchup, e.g. \'Minnesota Lynx vs. New York Liberty\'",\n'
+    '      "game": "matchup, e.g. \'Boston Celtics vs. New York Knicks\'",\n'
     '      "pick": "the wager, short and specific, e.g. \'Lynx ML\' or \'Under 173.5\'",\n'
     '      "line": "odds/spread/total plus any line-movement note, or \\"\\" if not stated",\n'
     '      "units": "units or confidence as stated, e.g. \'0.5u\' or \'Lean — not official\', or \\"\\"",\n'

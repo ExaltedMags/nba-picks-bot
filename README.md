@@ -1,6 +1,6 @@
 # NBA Picks Bot
 
-Automated daily NBA picks report emailed at 12:00 AM Philippine Time.
+Automated daily NBA picks report emailed at 10:00 PM Philippine Time.
 
 Fetches the latest picks videos, extracts transcripts, scrapes pinned comment
 pick sheets, summarizes via Gemini, and sends a consolidated report.
@@ -101,7 +101,7 @@ nba-picks-bot/
 
 ## Schedule
 
-Runs daily at **4:00 PM UTC = 12:00 AM Philippine Time (PHT)**.
+Runs daily at **4:00 PM UTC = 10:00 PM Philippine Time (PHT)**.
 
 ---
 
@@ -132,4 +132,4 @@ A video only counts as "today's" if it was published within
 `MAX_VIDEO_AGE_HOURS` (default **22h**, env-configurable). If today's video
 isn't up yet, the channel is treated as **EMPTY** rather than silently falling
 back to the previous day's video and mislabeling it as today's. The 22h default
-is tuned to the 16:00 UTC schedule — adjust it if you change the cron time.
+is tuned to the 14:00 UTC schedule — adjust it if you change the cron time.

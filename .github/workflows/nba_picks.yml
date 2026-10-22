@@ -2,7 +2,7 @@ name: NBA Picks Daily Report
 
 on:
   schedule:
-    - cron: '0 16 * * *'  # 4:00 PM UTC = 12:00 AM PHT
+    - cron: '0 14 * * *'  # 2:00 PM UTC = 10:00 PM PHT
   workflow_dispatch:        # Manual trigger for testing
 
 jobs:

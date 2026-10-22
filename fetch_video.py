@@ -16,7 +16,7 @@ PLAYLIST_ITEMS_URL = "https://www.googleapis.com/youtube/v3/playlistItems"
 # How many recent uploads to pull from a channel's uploads playlist. We read the
 # uploads playlist instead of search.list because search.list's index lags
 # uploads by minutes-to-hours, which was silently dropping videos posted shortly
-# before the run (e.g. a World Cup picks video uploaded ~1h before the 16:00 UTC
+# before the run (e.g. a World Cup picks video uploaded ~1h before the daily
 # run never appeared). The uploads playlist reflects new videos in real time and
 # is returned newest-first; 50 comfortably spans the freshness window even for
 # high-volume channels.

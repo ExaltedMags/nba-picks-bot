@@ -1,7 +1,7 @@
 # NBA Picks Bot
 
-Automated daily NBA picks report emailed around 10:00 PM Philippine Time
-(always inside 9:30 PM – 1:00 AM PHT, never in the middle of the night).
+Automated daily NBA picks report emailed at 10:00 PM Philippine Time
+(never later than 1:00 AM PHT, never in the middle of the night).
 
 Fetches the latest picks videos, extracts transcripts, scrapes pinned comment
 pick sheets, summarizes via Gemini, and sends a consolidated report.
@@ -57,14 +57,10 @@ Push this repo to GitHub, then go to **Settings → Secrets and variables → Ac
 | `DAFT_CHANNEL_ID` | Optional — overrides the built-in Daft Previews channel ID |
 | `HTTP_PROXY_URL` | Optional proxy URL for scraping |
 
-### 6. Set up the on-time trigger
-Follow [Schedule → Setup](#setup-cron-joborg) below. Without it the bot only
-has GitHub's own scheduler, which is regularly hours late.
-
-### 7. Test the workflow
+### 6. Test the workflow
 Go to **Actions** tab → **NBA Picks Daily Report** → **Run workflow**. Tick
-**force** to run outside the evening window (otherwise the run just logs
-"outside the send window" and exits).
+**force** to run right away. Without it, the run follows the normal schedule
+rules below, so outside the evening it just logs why it skipped.
 
 ---
 
@@ -93,7 +89,7 @@ python main.py
 nba-picks-bot/
 ├── .github/workflows/nba_picks.yml   # GitHub Actions cron
 ├── main.py                            # Orchestrator
-├── schedule_guard.py                  # Send-window + once-per-night check
+├── schedule_guard.py                  # Decides skip / wait-until-22:00 / run
 ├── fetch_video.py                     # YouTube Data API: latest video per channel
 ├── get_transcript.py                  # Supadata transcript extraction + cleaning
 ├── get_pinned_comment.py              # YouTube API: pinned comment URL extraction
@@ -109,91 +105,78 @@ nba-picks-bot/
 
 ## Schedule
 
-**Target:** one email per night, sent at ~10:00 PM PHT, never outside the
-**21:30–01:00 PHT send window**.
+**Target:** one email per night at **10:00 PM PHT**. If that slot is missed, a
+run starts by 1:00 AM PHT at the latest. Nothing to set up outside GitHub.
 
-### Why GitHub's `schedule` alone isn't enough
+### Why the old schedule was late
 
 GitHub Actions cron is best-effort. For this repo, the `0 14 * * *`
 (10:00 PM PHT) schedule started between **01:11 and 06:35 AM PHT** on every
 scheduled run from Oct 24 to Nov 5, 2026: 3 to 8½ hours late. GitHub doesn't
-guarantee start times, and runs set for the top of the hour wait the longest.
+guarantee start times, so asking for 10 PM can't make it start at 10 PM.
 
-### How it works now
+### How it works now: arrive early, wait on the runner
 
-| Trigger | When | Role |
-|---|---|---|
-| **cron-job.org → `workflow_dispatch` API** | 22:00, 22:30, 23:00, 23:30 PHT | **Primary.** Starts within seconds. |
-| GitHub `schedule` | 22:17, 22:47 PHT (often hours late) | Backup. If it fires late, it does nothing. |
-| Manual **Run workflow** | any time | Testing (tick **force**). |
+Instead of asking GitHub to *start* at 10 PM, the workflow asks it to start
+several times through the afternoon. The first run that shows up early holds
+until 10 PM itself. The runner keeps the clock, so GitHub's delay doesn't
+matter.
 
-Every run first runs `schedule_guard.py`:
+Scheduled runs: **12:07, 14:07, 16:07, 18:07, 20:07 PHT** (`7 4,6,8,10,12 * * *` UTC).
+Each run goes through `schedule_guard.py`:
 
-1. **Send window.** If it isn't 21:30–01:00 PHT, the run exits in a few
-   seconds without doing anything. That means a GitHub run that turns up at
-   4 AM can't email you.
-2. **Once per night.** After a run emails the report, it saves a marker
-   in the Actions cache under tonight's date. Later runs that night find it
-   and skip. Runs after midnight still count as the previous evening.
-3. **Built-in retries.** A run that finds no fresh videos yet, or fails,
-   doesn't write the marker, so the 22:30 / 23:00 / 23:30 runs try again. That
-   catches late uploads too.
-
-A `concurrency` group makes sure two triggers that arrive together run one
-after the other.
-
-You can change the window with repository **variables** (Settings → Secrets
-and variables → Actions → Variables): `SEND_WINDOW_START` / `SEND_WINDOW_END`,
-as `HH:MM` PHT.
-
-### Setup (cron-job.org)
-
-cron-job.org is free and runs each job within seconds of its time. It also
-supports the Asia/Manila time zone and emails you when a job fails.
-
-**1. Create a GitHub token that can start the workflow**
-
-- GitHub → Settings → Developer settings → **Fine-grained personal access
-  tokens** → *Generate new token*
-- Repository access: **Only select repositories** → `nba-picks-bot`
-- Permissions → Repository permissions → **Actions: Read and write**
-  (nothing else is needed)
-- Expiration: the longest option you're offered. **Put the expiry date in your
-  calendar.** If the token expires, the trigger quietly stops working.
-
-**2. Create the cron job** at <https://console.cron-job.org> → *Create cronjob*
-
-- **URL:** `https://api.github.com/repos/ExaltedMags/nba-picks-bot/actions/workflows/nba_picks.yml/dispatches`
-- **Schedule:** *Custom* → Days of month: every, Days of week: every,
-  Months: every, **Hours: 22, 23**, **Minutes: 0, 30**
-- **Time zone:** `Asia/Manila`
-- **Advanced** tab:
-  - Request method: **POST**
-  - Headers:
-    - `Accept: application/vnd.github+json`
-    - `Authorization: Bearer <your token>`
-    - `X-GitHub-Api-Version: 2022-11-28`
-    - `Content-Type: application/json`
-  - Request body: `{"ref":"main"}`
-- **Notifications:** turn on *notify on failure* and *notify when the job is
-  disabled*.
-
-**3. Test it:** use *Test run* in cron-job.org. A good response is
-**`204 No Content`**, and a new "workflow_dispatch" run should appear in the
-Actions tab right away. It will log "outside the send window" unless you test
-between 21:30 and 01:00 PHT. That's expected.
-
-| Response | Meaning |
+| When the run actually starts (PHT) | What it does |
 |---|---|
-| `401` | Token is wrong or expired |
-| `403` / `404` | Token can't access this repo, or doesn't have Actions write |
-| `422` | Wrong branch in `ref`, or a typo in the workflow file name |
+| before 18:00 | Skips in seconds. A later scheduled run will cover tonight. |
+| 18:00 – 22:00 | **Waits on the runner until 22:00**, then runs. |
+| 22:00 – 01:00 | Runs immediately. |
+| after 01:00 | Skips. No more 3–4 AM emails. |
 
-### Keeping the backup alive
+Replaying the real delays from Oct 24 – Nov 5 (3.2h to 8.6h) through this
+schedule, **every night sends at exactly 22:00**. At least one of the five
+triggers lands in the 18:00–01:00 range whether GitHub is on time or up to
+~9h late.
 
-GitHub turns off scheduled workflows in public repos after 60 days with no
-commits. The cron-job.org trigger is **not** affected by this. If the Actions
-tab shows a "scheduled workflow disabled" banner, just re-enable it.
+**Safety rails**
+
+- **One email per night.** After a run sends, it stores a marker in the
+  Actions cache under tonight's date. Every later run that night sees it and
+  stops. Runs after midnight count as the previous evening.
+- **One sender at a time.** The send job uses a `concurrency` group. A
+  second eligible run waits behind the first, then sees the marker and exits.
+  If several runs pile up, GitHub cancels the extra queued ones. Grey
+  "cancelled" runs in the Actions tab are expected and harmless.
+- **Retries for late videos.** If nothing was emailed (no fresh videos yet, or
+  a source broke), the run retries every 30 min until 23:30 PHT.
+- **Free.** The repo is public, so Actions minutes, including the waiting,
+  cost nothing. If you make the repo **private**, the waiting will use your
+  2,000 free minutes/month, so lower `MAX_EARLY_WAIT_MIN` or go back to an
+  external trigger.
+
+**Settings** (optional repository *variables*: Settings → Secrets and
+variables → Actions → Variables):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SEND_WINDOW_START` | `22:00` | Target send time (PHT) |
+| `SEND_WINDOW_END` | `01:00` | No run starts after this (PHT) |
+| `RETRY_UNTIL` | `23:30` | Last retry when nothing was sent (PHT) |
+| `MAX_EARLY_WAIT_MIN` | `240` | Longest an early run will wait. Keep it ≤ 240 so wait + retries fit GitHub's 6h job limit |
+
+### Keeping it alive
+
+GitHub turns off scheduled workflows in public repos after **60 days with no
+commits**. You'll get an email, and the Actions tab shows a banner. Click
+*Enable workflow* (or push any commit) to turn it back on.
+
+### External pingers (optional)
+
+The workflow still accepts `workflow_dispatch`. If you later want a second,
+independent trigger (e.g. cron-job.org or a Cloudflare Worker calling
+`POST /repos/ExaltedMags/nba-picks-bot/actions/workflows/nba_picks.yml/dispatches`
+with `{"ref":"main"}` and a token that has *Actions: write*), it plugs in with
+no changes. The guard and once-per-night marker apply to it too. It isn't
+needed.
 
 ---
 
@@ -224,4 +207,4 @@ A video only counts as "today's" if it was published within
 `MAX_VIDEO_AGE_HOURS` (default **22h**, env-configurable). If today's video
 isn't up yet, the channel is treated as **EMPTY** rather than silently falling
 back to the previous day's video and mislabeling it as today's. The 22h default
-is tuned to the 21:30–01:00 PHT send window. Adjust it if you move the window.
+is tuned to the 22:00–01:00 PHT send window. Adjust it if you move the window.

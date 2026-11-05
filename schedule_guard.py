@@ -1,29 +1,36 @@
-"""Decide whether this workflow run should do the daily report.
+"""Decide what this workflow run should do about tonight's report.
 
-The workflow can be started by several triggers (an external cron calling
-workflow_dispatch, GitHub's own `schedule`, or a manual click). This guard
-makes them safe to stack:
+GitHub's `schedule` trigger starts runs hours late (3–8h has been normal for
+this repo), so the workflow doesn't rely on it starting on time. Instead it
+schedules several runs through the afternoon. The first run that shows up
+early waits on the runner until the target time, then sends. In other words,
+the job itself keeps the clock, not GitHub's scheduler.
 
-- Send window: only runs whose start time falls inside the PHT window
-  (default 21:30–01:00) proceed. A GitHub `schedule` run that shows up hours
-  late (e.g. 3–4 AM) exits as a no-op instead of emailing in the middle of the
-  night.
-- Report day: a key like `2026-11-05` identifying "tonight's" report. Runs
-  just after midnight still map to the previous evening, so a 00:30 run is the
-  same report as a 22:00 run. The workflow uses this key to send at most one
-  email per night.
+Actions, written to $GITHUB_OUTPUT as `action`:
+  wait  – arrived before the target time but within MAX_EARLY_WAIT_MIN of it:
+          sleep `wait_seconds`, then run.
+  run   – inside the send window (or forced): run now.
+  skip  – too early to wait (a later scheduled run will cover it) or past the
+          window (e.g. a run that turned up at 4 AM): do nothing.
 
-Stdlib only, so it runs before Python dependencies are installed. Writes
-`proceed`, `in_window`, `report_day` and `reason` to $GITHUB_OUTPUT when
-available and always prints them. `in_window` is reported separately from
-`proceed` so a forced run outside the window (e.g. a 9 AM test) doesn't mark
-tonight's report as already sent.
+Also written:
+  report_day   – "tonight's" date (runs before 06:00 PHT count as the previous
+                 evening). Used as the once-per-night key.
+  retry_until  – Unix time after which no new attempt should start. Runs that
+                 find no fresh videos yet retry every 30 min until then.
+  in_window    – whether the report time falls in the window. A forced 9 AM
+                 test run must not mark tonight as already sent.
+  reason       – human-readable explanation.
 
-Env:
-  FORCE              "true" skips the window check (manual runs).
-  SEND_WINDOW_START  "HH:MM" PHT, default 21:30.
-  SEND_WINDOW_END    "HH:MM" PHT, default 01:00 (may be past midnight).
-  GUARD_NOW          ISO timestamp override, for testing.
+Env (all optional):
+  FORCE               "true": run now, ignoring the window.
+  SEND_WINDOW_START   "HH:MM" PHT, target send time. Default 22:00.
+  SEND_WINDOW_END     "HH:MM" PHT, latest start time. Default 01:00.
+  RETRY_UNTIL         "HH:MM" PHT, last retry start. Default 23:30.
+  MAX_EARLY_WAIT_MIN  How long an early run may wait. Default 240.
+  GUARD_NOW           ISO timestamp override, for testing.
+
+Stdlib only, so it runs before Python dependencies are installed.
 """
 
 import os
@@ -33,8 +40,7 @@ from zoneinfo import ZoneInfo
 
 PHT = ZoneInfo("Asia/Manila")
 
-# Shift used to assign post-midnight runs to the previous evening's report.
-# Anything before 06:00 PHT counts as "last night".
+# Runs before 06:00 PHT belong to the previous evening's report.
 _DAY_ROLLOVER = timedelta(hours=6)
 
 
@@ -44,54 +50,93 @@ def _parse_hhmm(value: str, default: str) -> time:
         hh, mm = raw.split(":")
         return time(int(hh), int(mm))
     except ValueError:
-        print(f"Invalid window time {raw!r}, using {default}", file=sys.stderr)
+        print(f"Invalid time {raw!r}, using {default}", file=sys.stderr)
         hh, mm = default.split(":")
         return time(int(hh), int(mm))
 
 
-def in_window(now: time, start: time, end: time) -> bool:
-    if start <= end:
-        return start <= now < end
-    # Window wraps past midnight, e.g. 21:30–01:00.
-    return now >= start or now < end
+def _at(day: datetime, t: time, base: time) -> datetime:
+    """`t` on the report day, pushed to the next calendar day if it is
+    earlier than `base` (i.e. the window wraps past midnight)."""
+    dt = day.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+    if t < base:
+        dt += timedelta(days=1)
+    return dt
 
 
-def report_day(now_pht: datetime) -> str:
-    return (now_pht - _DAY_ROLLOVER).date().isoformat()
+def decide(
+    now: datetime,
+    force: bool,
+    start_t: time,
+    end_t: time,
+    retry_t: time,
+    max_wait: timedelta,
+) -> dict:
+    report_date = (now - _DAY_ROLLOVER).date()
+    day0 = datetime.combine(report_date, time(0), tzinfo=PHT)
+    start = _at(day0, start_t, start_t)
+    end = _at(day0, end_t, start_t)
+    retry_until = min(_at(day0, retry_t, start_t), end)
+    window = f"{start_t:%H:%M}–{end_t:%H:%M} PHT"
 
+    in_window = start <= now < end
+    result = {
+        "report_day": report_date.isoformat(),
+        "in_window": in_window,
+        "wait_seconds": 0,
+        # A run that starts after retry_until still gets exactly one attempt.
+        "retry_until": int(max(retry_until, now).timestamp()),
+    }
 
-def decide(now_pht: datetime, force: bool, start: time, end: time) -> tuple[bool, str]:
-    window = f"{start:%H:%M}–{end:%H:%M} PHT"
     if force:
-        return True, f"forced run (window {window} ignored)"
-    if in_window(now_pht.time(), start, end):
-        return True, f"{now_pht:%H:%M} PHT is inside the send window {window}"
-    return False, f"{now_pht:%H:%M} PHT is outside the send window {window}; skipping"
+        result.update(action="run", reason=f"Forced run (window {window} ignored)")
+        result["retry_until"] = int(now.timestamp())  # single attempt
+    elif in_window:
+        result.update(action="run", reason=f"{now:%H:%M} PHT is inside the send window {window}")
+    elif now < start and start - now <= max_wait:
+        wait = int((start - now).total_seconds())
+        result.update(
+            action="wait",
+            wait_seconds=wait,
+            reason=f"Early by {wait // 60} min; waiting on the runner until {start:%H:%M} PHT",
+        )
+    elif now < start:
+        result.update(
+            action="skip",
+            reason=(
+                f"{now:%H:%M} PHT is more than {int(max_wait.total_seconds() // 60)} min "
+                f"before {start:%H:%M}; leaving it to a later scheduled run"
+            ),
+        )
+    else:
+        result.update(action="skip", reason=f"{now:%H:%M} PHT is past the send window {window}")
+    return result
 
 
 def main() -> None:
     override = os.environ.get("GUARD_NOW")
-    now = datetime.fromisoformat(override) if override else datetime.now(PHT)
-    now_pht = now.astimezone(PHT)
+    now = (datetime.fromisoformat(override) if override else datetime.now(PHT)).astimezone(PHT)
 
-    force = os.environ.get("FORCE", "").strip().lower() == "true"
-    start = _parse_hhmm(os.environ.get("SEND_WINDOW_START", ""), "21:30")
-    end = _parse_hhmm(os.environ.get("SEND_WINDOW_END", ""), "01:00")
+    result = decide(
+        now,
+        force=os.environ.get("FORCE", "").strip().lower() == "true",
+        start_t=_parse_hhmm(os.environ.get("SEND_WINDOW_START", ""), "22:00"),
+        end_t=_parse_hhmm(os.environ.get("SEND_WINDOW_END", ""), "01:00"),
+        retry_t=_parse_hhmm(os.environ.get("RETRY_UNTIL", ""), "23:30"),
+        max_wait=timedelta(minutes=int(os.environ.get("MAX_EARLY_WAIT_MIN") or 240)),
+    )
 
-    proceed, reason = decide(now_pht, force, start, end)
-    inside = in_window(now_pht.time(), start, end)
-    day = report_day(now_pht)
-
-    print(f"now={now_pht.isoformat()} report_day={day} proceed={proceed} in_window={inside}")
-    print(reason)
+    print(f"now={now.isoformat()}")
+    for key in ("action", "wait_seconds", "report_day", "in_window", "retry_until", "reason"):
+        print(f"  {key}={result[key]}")
 
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a", encoding="utf-8") as fh:
-            fh.write(f"proceed={'true' if proceed else 'false'}\n")
-            fh.write(f"in_window={'true' if inside else 'false'}\n")
-            fh.write(f"report_day={day}\n")
-            fh.write(f"reason={reason}\n")
+            for key, val in result.items():
+                if isinstance(val, bool):
+                    val = "true" if val else "false"
+                fh.write(f"{key}={val}\n")
 
 
 if __name__ == "__main__":

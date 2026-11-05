@@ -1,57 +1,86 @@
 name: NBA Picks Daily Report
 
-# Triggers are stacked for reliability, and the guard below makes that safe:
-#   1. PRIMARY: an external cron (cron-job.org, free) calls this workflow's
-#      workflow_dispatch API at 22:00, 22:30 and 23:00 PHT. These start within
-#      seconds. See "Schedule" in the README for setup.
-#   2. BACKUP: GitHub's own `schedule`, which is often delayed by hours (runs at
-#      03:00–05:00 PHT have been common). A late run lands outside the send
-#      window and exits as a no-op, so it can only help, never spam.
-#   3. Manual "Run workflow" button, with an optional `force` to run any time.
+# How this hits ~10 PM PHT without an external cron service or token
+# ----------------------------------------------------------------------
+# GitHub's `schedule` trigger starts runs late, often by 3–8 hours on this repo,
+# so we don't rely on it starting on time. Instead:
 #
-# At most one email goes out per night: once a run sends, it stores a marker in
-# the Actions cache under tonight's date and every later run skips.
+#   1. Several scheduled runs are set through the afternoon (UTC times below).
+#   2. Each run checks the time (schedule_guard.py):
+#        - more than 4h before 22:00 PHT -> skip (a later run will cover it)
+#        - 18:00–22:00 PHT               -> wait on the runner until 22:00
+#        - 22:00–01:00 PHT               -> run now
+#        - after 01:00 PHT               -> skip (no 3–4 AM emails)
+#   3. Only one run can hold the "send" slot at a time (concurrency group), and
+#      once tonight's email is out, a marker in the Actions cache makes every
+#      later run that night a no-op.
+#   4. If the videos aren't up yet, the run retries every 30 min until 23:30.
+#
+# The repo is public, so runner minutes (including the waiting) are free.
+# workflow_dispatch still works for manual runs (tick "force" to run any time)
+# or for an external pinger, if you ever add one.
 on:
   schedule:
-    # 22:17 and 22:47 PHT. Off-the-hour minutes are less congested than :00.
-    - cron: '17 14 * * *'
-    - cron: '47 14 * * *'
+    # 12:07, 14:07, 16:07, 18:07, 20:07 PHT. Off-the-hour minutes are less
+    # congested. Even 3–8h late, at least one of these lands between 18:00 and
+    # 01:00 PHT. If GitHub happens to be on time, the 18:07/20:07 runs wait.
+    - cron: '7 4,6,8,10,12 * * *'
   workflow_dispatch:
     inputs:
       force:
-        description: 'Run now even outside the 21:30–01:00 PHT window, and even if tonight''s email was already sent'
+        description: 'Run now, even outside 22:00–01:00 PHT and even if tonight''s email was already sent'
         type: boolean
         default: false
-
-# Never run two at once (e.g. external cron + GitHub schedule landing together):
-# the second waits, then sees the sent marker and skips.
-concurrency:
-  group: nba-picks-daily
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
+env:
+  SENT_MARKER_PATH: .state/sent-marker
+  SEND_WINDOW_START: ${{ vars.SEND_WINDOW_START }}
+  SEND_WINDOW_END: ${{ vars.SEND_WINDOW_END }}
+  RETRY_UNTIL: ${{ vars.RETRY_UNTIL }}
+  MAX_EARLY_WAIT_MIN: ${{ vars.MAX_EARLY_WAIT_MIN }}
+  FORCE: ${{ inputs.force }}
+
 jobs:
-  run-picks:
+  # Quick filter. Runs that are far too early or too late stop here, so they
+  # never take the send slot below.
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      SENT_MARKER_PATH: .state/sent-marker
+    timeout-minutes: 5
+    outputs:
+      action: ${{ steps.guard.outputs.action }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check time
+        id: guard
+        run: python3 schedule_guard.py
+      - name: Summary
+        run: 'echo "::notice::${{ steps.guard.outputs.action }} - ${{ steps.guard.outputs.reason }}"'
+
+  send:
+    needs: check
+    if: needs.check.outputs.action != 'skip'
+    runs-on: ubuntu-latest
+    # Up to 4h waiting + retries until 23:30 + the run itself. Hosted max is 360.
+    timeout-minutes: 355
+    # One run at a time holds the send slot. A run queued behind it starts after
+    # it finishes, re-checks the time, sees the "already sent" marker and exits.
+    concurrency:
+      group: nba-picks-send
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
 
-      - name: Check send window
+      # Checked again here: this job may have waited in the queue behind another.
+      - name: Check time
         id: guard
-        env:
-          FORCE: ${{ inputs.force }}
-          SEND_WINDOW_START: ${{ vars.SEND_WINDOW_START }}
-          SEND_WINDOW_END: ${{ vars.SEND_WINDOW_END }}
         run: python3 schedule_guard.py
 
       - name: Check if tonight's email was already sent
         id: sent
-        if: steps.guard.outputs.proceed == 'true' && inputs.force != true
+        if: steps.guard.outputs.action != 'skip' && inputs.force != true
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SENT_MARKER_PATH }}
@@ -61,11 +90,11 @@ jobs:
       - name: Decide
         id: go
         run: |
-          if [ "${{ steps.guard.outputs.proceed }}" != "true" ]; then
+          if [ "${{ steps.guard.outputs.action }}" = "skip" ]; then
             echo "::notice::Skipped: ${{ steps.guard.outputs.reason }}"
             echo "run=false" >> "$GITHUB_OUTPUT"
           elif [ "${{ steps.sent.outputs.cache-hit }}" = "true" ]; then
-            echo "::notice::Skipped: report for ${{ steps.guard.outputs.report_day }} was already emailed by an earlier run."
+            echo "::notice::Skipped: tonight's report (${{ steps.guard.outputs.report_day }}) was already emailed."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -80,6 +109,12 @@ jobs:
         if: steps.go.outputs.run == 'true'
         run: pip install -r requirements.txt
 
+      - name: Wait until send time
+        if: steps.go.outputs.run == 'true' && steps.guard.outputs.action == 'wait'
+        run: |
+          echo "${{ steps.guard.outputs.reason }}"
+          sleep "${{ steps.guard.outputs.wait_seconds }}"
+
       - name: Run picks automation
         if: steps.go.outputs.run == 'true'
         env:
@@ -93,13 +128,37 @@ jobs:
           EV_CHANNEL_ID: ${{ secrets.EV_CHANNEL_ID }}
           DAFT_CHANNEL_ID: ${{ secrets.DAFT_CHANNEL_ID }}
           HTTP_PROXY_URL: ${{ secrets.HTTP_PROXY_URL }}
-        run: python main.py
+          RETRY_UNTIL_EPOCH: ${{ steps.guard.outputs.retry_until }}
+        run: |
+          # Retry every 30 min while no email has gone out (videos not posted
+          # yet, or a source broke), as long as the next try starts by
+          # RETRY_UNTIL (default 23:30 PHT).
+          attempt=1
+          while true; do
+            echo "::group::Attempt $attempt ($(TZ=Asia/Manila date '+%H:%M PHT'))"
+            python main.py
+            rc=$?
+            echo "::endgroup::"
+            if [ -f "$SENT_MARKER_PATH" ]; then
+              echo "Email sent on attempt $attempt."
+              exit 0
+            fi
+            next=$(( $(date +%s) + 1800 ))
+            if [ "$next" -gt "$RETRY_UNTIL_EPOCH" ]; then
+              echo "No email sent (last exit code $rc); no retries left tonight."
+              exit "$rc"
+            fi
+            echo "No email yet (exit code $rc). Retrying in 30 min."
+            sleep 1800
+            attempt=$((attempt + 1))
+          done
+        shell: bash {0}  # no -e: a failed attempt must not end the retry loop
 
       # main.py writes the marker right after the email goes out. Save it even if
-      # something fails afterwards, so a later trigger can't send a duplicate.
+      # a later step fails, so no other run can send a duplicate tonight.
       # A forced test run outside the window doesn't mark tonight as sent.
       - name: Remember tonight's email was sent
-        if: always() && steps.go.outputs.run == 'true' && steps.guard.outputs.in_window == 'true' && hashFiles('.state/sent-marker') != ''
+        if: always() && steps.go.outputs.run == 'true' && hashFiles('.state/sent-marker') != '' && (steps.guard.outputs.in_window == 'true' || steps.guard.outputs.action == 'wait')
         uses: actions/cache/save@v5
         with:
           path: ${{ env.SENT_MARKER_PATH }}

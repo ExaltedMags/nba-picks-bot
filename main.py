@@ -1,6 +1,7 @@
 """NBA Picks Automation — daily orchestrator."""
 
 import logging
+import os
 import sys
 import time
 from datetime import datetime
@@ -228,6 +229,22 @@ def main() -> None:
 
     send_email(subject, text_body, html_body)
     logger.info("Report emailed to %s", REPORT_RECIPIENT)
+    _write_sent_marker()
+
+
+def _write_sent_marker() -> None:
+    """Record that tonight's email went out, so later triggers don't resend.
+
+    The workflow sets SENT_MARKER_PATH and caches the file under tonight's
+    report-day key; any later run that finds that cache entry is a no-op.
+    """
+    path = os.environ.get("SENT_MARKER_PATH")
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(datetime.now(pytz.timezone(PHT)).isoformat() + "\n")
+    logger.info("Wrote sent marker %s", path)
 
 
 if __name__ == "__main__":

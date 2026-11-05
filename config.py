@@ -33,9 +33,10 @@ GEMINI_MODEL = "gemini-2.5-flash"
 
 # Freshness window: a video only counts as "today's" if it was published within
 # this many hours of the run. This prevents grabbing a previous day's video and
-# presenting it as today's. Tuned for the daily 14:00 UTC schedule (today's
-# picks post in the ~16h before the run; the prior day's are ~24h+ old, so 22h
-# accepts today's and rejects yesterday's). Adjust if you change the cron time.
+# presenting it as today's. Tuned for the 21:30–01:00 PHT send window (see
+# schedule_guard.py): today's picks post in the ~16h before the run, the prior
+# day's are ~24h+ old, so 22h accepts today's and rejects yesterday's. Adjust
+# if you move the window.
 MAX_VIDEO_AGE_HOURS = int(os.environ.get("MAX_VIDEO_AGE_HOURS", "22"))
 
 # Timezone

@@ -1,24 +1,87 @@
 name: NBA Picks Daily Report
 
+# Triggers are stacked for reliability, and the guard below makes that safe:
+#   1. PRIMARY: an external cron (cron-job.org, free) calls this workflow's
+#      workflow_dispatch API at 22:00, 22:30 and 23:00 PHT. These start within
+#      seconds. See "Schedule" in the README for setup.
+#   2. BACKUP: GitHub's own `schedule`, which is often delayed by hours (runs at
+#      03:00–05:00 PHT have been common). A late run lands outside the send
+#      window and exits as a no-op, so it can only help, never spam.
+#   3. Manual "Run workflow" button, with an optional `force` to run any time.
+#
+# At most one email goes out per night: once a run sends, it stores a marker in
+# the Actions cache under tonight's date and every later run skips.
 on:
   schedule:
-    - cron: '0 14 * * *'  # 2:00 PM UTC = 10:00 PM PHT
-  workflow_dispatch:        # Manual trigger for testing
+    # 22:17 and 22:47 PHT. Off-the-hour minutes are less congested than :00.
+    - cron: '17 14 * * *'
+    - cron: '47 14 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run now even outside the 21:30–01:00 PHT window, and even if tonight''s email was already sent'
+        type: boolean
+        default: false
+
+# Never run two at once (e.g. external cron + GitHub schedule landing together):
+# the second waits, then sees the sent marker and skips.
+concurrency:
+  group: nba-picks-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   run-picks:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SENT_MARKER_PATH: .state/sent-marker
     steps:
       - uses: actions/checkout@v5
 
+      - name: Check send window
+        id: guard
+        env:
+          FORCE: ${{ inputs.force }}
+          SEND_WINDOW_START: ${{ vars.SEND_WINDOW_START }}
+          SEND_WINDOW_END: ${{ vars.SEND_WINDOW_END }}
+        run: python3 schedule_guard.py
+
+      - name: Check if tonight's email was already sent
+        id: sent
+        if: steps.guard.outputs.proceed == 'true' && inputs.force != true
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.SENT_MARKER_PATH }}
+          key: picks-sent-${{ steps.guard.outputs.report_day }}
+          lookup-only: true
+
+      - name: Decide
+        id: go
+        run: |
+          if [ "${{ steps.guard.outputs.proceed }}" != "true" ]; then
+            echo "::notice::Skipped: ${{ steps.guard.outputs.reason }}"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.sent.outputs.cache-hit }}" = "true" ]; then
+            echo "::notice::Skipped: report for ${{ steps.guard.outputs.report_day }} was already emailed by an earlier run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v6
+        if: steps.go.outputs.run == 'true'
         with:
           python-version: '3.11'
 
       - name: Install Python dependencies
+        if: steps.go.outputs.run == 'true'
         run: pip install -r requirements.txt
 
       - name: Run picks automation
+        if: steps.go.outputs.run == 'true'
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -31,3 +94,13 @@ jobs:
           DAFT_CHANNEL_ID: ${{ secrets.DAFT_CHANNEL_ID }}
           HTTP_PROXY_URL: ${{ secrets.HTTP_PROXY_URL }}
         run: python main.py
+
+      # main.py writes the marker right after the email goes out. Save it even if
+      # something fails afterwards, so a later trigger can't send a duplicate.
+      # A forced test run outside the window doesn't mark tonight as sent.
+      - name: Remember tonight's email was sent
+        if: always() && steps.go.outputs.run == 'true' && steps.guard.outputs.in_window == 'true' && hashFiles('.state/sent-marker') != ''
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.SENT_MARKER_PATH }}
+          key: picks-sent-${{ steps.guard.outputs.report_day }}

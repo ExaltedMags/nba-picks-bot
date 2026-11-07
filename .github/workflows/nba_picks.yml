@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 14 * * *'  # 2:00 PM UTC = 10:00 PM PHT
   workflow_dispatch:        # Manual trigger for testing
+    inputs:
+      dry_run:
+        description: Build the report without sending email
+        type: boolean
+        default: false
 
 jobs:
   run-picks:
@@ -18,8 +23,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Run regression tests
+        run: python -m unittest discover -s tests -v
+
       - name: Run picks automation
         env:
+          DRY_RUN: ${{ inputs.dry_run || false }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPADATA_API_KEY: ${{ secrets.SUPADATA_API_KEY }}
@@ -30,4 +39,9 @@ jobs:
           EV_CHANNEL_ID: ${{ secrets.EV_CHANNEL_ID }}
           DAFT_CHANNEL_ID: ${{ secrets.DAFT_CHANNEL_ID }}
           HTTP_PROXY_URL: ${{ secrets.HTTP_PROXY_URL }}
-        run: python main.py
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python main.py --dry-run
+          else
+            python main.py
+          fi

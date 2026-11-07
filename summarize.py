@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from config import GEMINI_API_KEY, GEMINI_MODEL
 
@@ -48,6 +48,28 @@ _ESCALATION = (
     "and parlays — including casually stated leans. If and ONLY IF no wager is "
     'stated anywhere, return {"no_picks_stated": true, "picks": []}.'
 )
+
+
+def _non_retryable_reason(exc: Exception) -> Optional[str]:
+    """Identify API failures that cannot recover during this pipeline run."""
+    if not isinstance(exc, errors.APIError):
+        return None
+
+    if exc.code == 429:
+        payload = exc.details if isinstance(exc.details, dict) else {}
+        error = payload.get("error", payload)
+        for detail in error.get("details", []):
+            for violation in detail.get("violations", []):
+                quota_id = violation.get("quotaId", "").lower()
+                description = violation.get("description", "").lower()
+                if "perday" in quota_id or "per day" in description:
+                    return "Gemini daily quota exhausted; wait for the quota reset or review API limits."
+        # Short-lived rate limits remain eligible for the normal retry policy.
+        return None
+
+    if 400 <= exc.code < 500 and exc.code != 408:
+        return f"Gemini request rejected (HTTP {exc.code}): {exc.message}"
+    return None
 
 
 def _parse_picks_json(text: str) -> Optional[dict]:
@@ -126,7 +148,16 @@ def summarize_with_gemini(
 
     user_message = "\n".join(parts)
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    # google-genai 3 defaults to v1, which rejects system instructions for
+    # this model. Keep the endpoint explicit across SDK upgrades. The retry
+    # policy below owns retries so SDK retries cannot multiply quota usage.
+    client = genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options=types.HttpOptions(
+            api_version="v1beta",
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
     last_exc: Optional[Exception] = None
 
     for attempt, delay in enumerate([0] + _RETRY_DELAYS):
@@ -151,6 +182,14 @@ def summarize_with_gemini(
         except Exception as exc:  # noqa: BLE001 — SDK raises many transient error types
             last_exc = exc
             logger.warning("Gemini attempt %d failed for %s: %s", attempt + 1, channel_name, exc)
+            reason = _non_retryable_reason(exc)
+            if reason:
+                return {
+                    "picks": [],
+                    "no_picks": False,
+                    "degraded": reason,
+                    "retryable": False,
+                }
             continue
 
         summary = _parse_picks_json(text)

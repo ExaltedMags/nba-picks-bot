@@ -1,5 +1,6 @@
 """NBA Picks Automation — daily orchestrator."""
 
+import argparse
 import logging
 import sys
 import time
@@ -114,8 +115,7 @@ def _result_health(result: dict) -> tuple[str, str]:
     - OK:       clean, usable summary.
     - EMPTY:    no qualifying video (legitimate off-day) — safe to report as-is.
     - DEGRADED: a video existed but could not be turned into a usable summary.
-                This is the state that triggers a full retry and, if it
-                persists, blocks the whole email.
+                Retry recoverable failures; omit the source if it persists.
     """
     if result["error"]:
         return "EMPTY", result["error"]
@@ -137,6 +137,10 @@ def _process_channel_resilient(spec: dict) -> dict:
     while attempt < _CHANNEL_ATTEMPTS:
         status, note = _result_health(result)
         if status != "DEGRADED":
+            return result
+        summary = result.get("summary")
+        if isinstance(summary, dict) and summary.get("retryable") is False:
+            logger.error("[%s] not retrying: %s", spec["channel_label"], note)
             return result
         delay = _CHANNEL_BACKOFF[min(attempt - 1, len(_CHANNEL_BACKOFF) - 1)]
         logger.warning(
@@ -171,7 +175,7 @@ def build_report(
     return subject, text_body, html_body
 
 
-def main() -> None:
+def main(dry_run: bool = False) -> None:
     _check_secrets()
     logger.info("Starting daily picks pipeline")
 
@@ -226,9 +230,15 @@ def main() -> None:
     subject, text_body, html_body = build_report(to_show, skipped)
     logger.info("Report built (%d chars text, %d chars html)", len(text_body), len(html_body))
 
+    if dry_run:
+        logger.info("Dry run complete. No email sent.")
+        return
+
     send_email(subject, text_body, html_body)
     logger.info("Report emailed to %s", REPORT_RECIPIENT)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="Build the report without sending email")
+    main(dry_run=parser.parse_args().dry_run)

@@ -58,6 +58,7 @@ Push this repo to GitHub, then go to **Settings → Secrets and variables → Ac
 
 ### 6. Test the workflow
 Go to **Actions** tab → **NBA Picks Daily Report** → **Run workflow**
+Check **dry_run** to validate the full pipeline without sending email.
 
 ---
 
@@ -76,6 +77,11 @@ export REPORT_RECIPIENT=...
 # export DAFT_CHANNEL_ID=...   # optional
 
 python main.py
+# To build the report without sending email:
+python main.py --dry-run
+
+# Run the offline regression suite:
+python -m unittest discover -s tests -v
 ```
 
 ---
@@ -116,7 +122,11 @@ stale content.
   summary — e.g. the AI fell back to a raw transcript excerpt, or no
   transcript/picks sheet could be retrieved).
 - A **DEGRADED** source triggers a full pipeline re-run (up to 3 attempts with
-  backoff).
+  backoff), except for permanent Gemini request errors or exhausted daily
+  quota. Those stop immediately and include the actionable cause in the logs.
+- Gemini uses API `v1beta` explicitly because the model's system instruction
+  is rejected by `v1`. Transient rate limits, server errors, and invalid model
+  output are still retried.
 - After retries, each source is handled uniformly:
   - **OK** → shown in the report.
   - **EMPTY** / **DEGRADED** → omitted and listed transparently under

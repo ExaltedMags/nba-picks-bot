@@ -1,6 +1,6 @@
 # NBA Picks Bot
 
-Automated daily NBA picks report emailed at 10:00 PM Philippine Time.
+Automated daily NBA picks report emailed at 11:00 PM Philippine Time.
 
 Fetches the latest picks videos, extracts transcripts, scrapes pinned comment
 pick sheets, summarizes via Gemini, and sends a consolidated report.
@@ -107,7 +107,15 @@ nba-picks-bot/
 
 ## Schedule
 
-Runs daily at **4:00 PM UTC = 10:00 PM Philippine Time (PHT)**.
+Runs daily at **3:00 PM UTC = 11:00 PM Philippine Time (PHT)**.
+
+- **Primary trigger:** a cron-job.org job calls the workflow's
+  `workflow_dispatch` endpoint at 23:00 Asia/Manila. It fires within seconds of
+  the set time.
+- **Backup trigger:** the GitHub Actions `schedule` (`23 15 * * *`). GitHub runs
+  schedules on a best-effort basis and they have arrived hours late, so the
+  backup skips itself when a run since 14:55 UTC already succeeded or is still
+  in progress. It only does real work if the primary trigger failed.
 
 ---
 
@@ -139,7 +147,7 @@ stale content.
 ### Freshness (no stale videos)
 
 A video only counts as "today's" if it was published within
-`MAX_VIDEO_AGE_HOURS` (default **22h**, env-configurable). If today's video
+`MAX_VIDEO_AGE_HOURS` (default **23h**, env-configurable). If today's video
 isn't up yet, the channel is treated as **EMPTY** rather than silently falling
-back to the previous day's video and mislabeling it as today's. The 22h default
-is tuned to the 14:00 UTC schedule — adjust it if you change the cron time.
+back to the previous day's video and mislabeling it as today's. The 23h default
+is tuned to the 15:00 UTC run — adjust it if you change the cron time.

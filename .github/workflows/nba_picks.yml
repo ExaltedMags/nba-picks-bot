@@ -1,32 +1,70 @@
 name: NBA Picks Daily Report
 
 on:
+  # Primary trigger: cron-job.org calls workflow_dispatch at 11:00 PM PHT
+  # (15:00 UTC). GitHub's own schedule is best-effort and has arrived 4-9 hours
+  # late, so it is only a backup: it skips itself when tonight's run already
+  # succeeded (see the "backup guard" step).
   schedule:
-    - cron: '0 14 * * *'  # 2:00 PM UTC = 10:00 PM PHT
-  workflow_dispatch:        # Manual trigger for testing
+    - cron: '23 15 * * *'  # 3:23 PM UTC = 11:23 PM PHT (backup, off the busy top of the hour)
+  workflow_dispatch:        # cron-job.org (primary) and manual runs
     inputs:
       dry_run:
         description: Build the report without sending email
         type: boolean
         default: false
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   run-picks:
     runs-on: ubuntu-latest
     steps:
+      - name: Backup guard (skip if tonight's run already happened)
+        id: guard
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # "Tonight" starts at the most recent 14:55 UTC (5 min before the
+          # 11:00 PM PHT primary trigger).
+          if (( 10#$(date -u +%H%M) >= 1455 )); then
+            since=$(date -u +%Y-%m-%dT14:55:00Z)
+          else
+            since=$(date -u -d yesterday +%Y-%m-%dT14:55:00Z)
+          fi
+          done_runs=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/nba_picks.yml/runs" \
+            -f created=">=$since" -f per_page=50 \
+            | jq --argjson self "$GITHUB_RUN_ID" '[.workflow_runs[]
+                | select(.id != $self)
+                | select(.conclusion == "success" or .status == "in_progress" or .status == "queued")]
+                | length')
+          echo "Runs since $since that succeeded or are still running: $done_runs"
+          if [ "$done_runs" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Tonight's report already ran - backup run skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: actions/checkout@v5
+        if: steps.guard.outputs.skip != 'true'
 
       - uses: actions/setup-python@v6
+        if: steps.guard.outputs.skip != 'true'
         with:
           python-version: '3.11'
 
       - name: Install Python dependencies
+        if: steps.guard.outputs.skip != 'true'
         run: pip install -r requirements.txt
 
       - name: Run regression tests
+        if: steps.guard.outputs.skip != 'true'
         run: python -m unittest discover -s tests -v
 
       - name: Run picks automation
+        if: steps.guard.outputs.skip != 'true'
         env:
           DRY_RUN: ${{ inputs.dry_run || false }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}

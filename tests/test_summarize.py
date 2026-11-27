@@ -1,4 +1,4 @@
-"""Regressions for Gemini endpoint selection and bounded API retries."""
+"""Regressions for Gemini endpoint/model selection, fallback, and bounded API retries."""
 
 import json
 import unittest
@@ -73,7 +73,14 @@ class GeminiTests(unittest.TestCase):
         self.assertEqual(body["generationConfig"]["responseMimeType"], "application/json")
         self.assertEqual(factory.call_args.kwargs["http_options"].retry_options.attempts, 1)
 
-    def test_permanent_client_errors_stop_after_one_attempt(self):
+    def models_called(self, client):
+        return [c.kwargs["model"] for c in client.models.generate_content.call_args_list]
+
+    def test_models_are_free_tier_and_off_deprecated_flash(self):
+        self.assertEqual(summarize.GEMINI_MODEL, "gemini-4-hydrogen")
+        self.assertEqual(summarize.GEMINI_FALLBACK_MODEL, "gemini-3.8-flash")
+
+    def test_permanent_client_errors_fall_back_once_then_stop(self):
         for code in (400, 401, 403, 404):
             with self.subTest(code=code):
                 client = Mock()
@@ -85,30 +92,92 @@ class GeminiTests(unittest.TestCase):
                     result = self.summarize()
                 self.assertFalse(result["retryable"])
                 self.assertIn(message, result["degraded"])
-                client.models.generate_content.assert_called_once()
+                self.assertEqual(
+                    self.models_called(client),
+                    [summarize.GEMINI_MODEL, summarize.GEMINI_FALLBACK_MODEL],
+                )
                 sleep.assert_not_called()
 
-    def test_daily_quota_does_not_retry(self):
+    def test_rejected_primary_sends_same_request_to_fallback(self):
+        client = Mock()
+        client.models.generate_content.side_effect = [
+            api_error(404, "models/gemini-4-hydrogen is not found"), GOOD_RESPONSE
+        ]
+        with patch.object(summarize.genai, "Client", return_value=client), patch.object(
+            summarize.time, "sleep"
+        ) as sleep:
+            result = self.summarize()
+        self.assertEqual(result["picks"][0]["pick"], "Boston ML")
+        self.assertEqual(
+            self.models_called(client), [summarize.GEMINI_MODEL, summarize.GEMINI_FALLBACK_MODEL]
+        )
+        first, second = client.models.generate_content.call_args_list
+        self.assertEqual(first.kwargs["contents"], second.kwargs["contents"])
+        self.assertEqual(first.kwargs["config"], second.kwargs["config"])
+        sleep.assert_not_called()
+
+    def test_fallback_after_transient_retry_does_not_sleep_again(self):
+        client = Mock()
+        client.models.generate_content.side_effect = [
+            api_error(503, "Model overloaded"),
+            api_error(400, "Unsupported parameter"),
+            GOOD_RESPONSE,
+        ]
+        with patch.object(summarize.genai, "Client", return_value=client), patch.object(
+            summarize.time, "sleep"
+        ) as sleep:
+            result = self.summarize()
+        self.assertEqual(result["picks"][0]["pick"], "Boston ML")
+        self.assertEqual(
+            self.models_called(client),
+            [summarize.GEMINI_MODEL, summarize.GEMINI_MODEL, summarize.GEMINI_FALLBACK_MODEL],
+        )
+        calls = client.models.generate_content.call_args_list
+        self.assertEqual(calls[1].kwargs["contents"], calls[2].kwargs["contents"])
+        sleep.assert_called_once()
+
+    @staticmethod
+    def daily_quota_error(violation):
+        return api_error(429, "Daily request quota exhausted", [
+            {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [violation]},
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "42280s"},
+        ])
+
+    def test_daily_quota_falls_back_once_and_does_not_retry(self):
         for violation in (
             {"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"},
             {"description": "Generate content requests per day limit exceeded"},
         ):
             with self.subTest(violation=violation):
                 client = Mock()
-                client.models.generate_content.side_effect = api_error(
-                    429, "Daily request quota exhausted", [
-                        {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [violation]},
-                        {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "42280s"},
-                    ]
-                )
+                client.models.generate_content.side_effect = self.daily_quota_error(violation)
                 with patch.object(summarize.genai, "Client", return_value=client), patch.object(
                     summarize.time, "sleep"
                 ) as sleep:
                     result = self.summarize()
                 self.assertFalse(result["retryable"])
                 self.assertTrue(result["degraded"])
-                client.models.generate_content.assert_called_once()
+                self.assertEqual(
+                    self.models_called(client),
+                    [summarize.GEMINI_MODEL, summarize.GEMINI_FALLBACK_MODEL],
+                )
                 sleep.assert_not_called()
+
+    def test_primary_daily_quota_recovers_on_fallback(self):
+        client = Mock()
+        client.models.generate_content.side_effect = [
+            self.daily_quota_error({"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}),
+            GOOD_RESPONSE,
+        ]
+        with patch.object(summarize.genai, "Client", return_value=client), patch.object(
+            summarize.time, "sleep"
+        ) as sleep:
+            result = self.summarize()
+        self.assertEqual(result["picks"][0]["pick"], "Boston ML")
+        self.assertEqual(
+            self.models_called(client), [summarize.GEMINI_MODEL, summarize.GEMINI_FALLBACK_MODEL]
+        )
+        sleep.assert_not_called()
 
     def test_transient_errors_still_retry_and_recover(self):
         for failure in (
@@ -127,7 +196,9 @@ class GeminiTests(unittest.TestCase):
                 ) as sleep:
                     result = self.summarize()
                 self.assertEqual(result["picks"][0]["pick"], "Boston ML")
-                self.assertEqual(client.models.generate_content.call_count, 2)
+                self.assertEqual(
+                    self.models_called(client), [summarize.GEMINI_MODEL, summarize.GEMINI_MODEL]
+                )
                 sleep.assert_called_once()
 
     def test_invalid_json_still_retries(self):

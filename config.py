@@ -28,8 +28,12 @@ REPORT_RECIPIENT = os.environ.get("REPORT_RECIPIENT")
 # e.g. Webshare: copy the proxy URL directly from https://proxy.webshare.io/proxy/list
 HTTP_PROXY_URL = os.environ.get("HTTP_PROXY_URL")
 
-# Gemini model
-GEMINI_MODEL = "gemini-2.5-flash"
+# Gemini models (both free tier as of 2026-11-27, per ai.google.dev pricing).
+# gemini-2.5-flash silently reroutes to the weaker gemini-3.5-flash-lite from
+# 2026-12-01. If the primary is rejected (4xx) or its daily quota is exhausted,
+# summarize.py sends the same request to the fallback once.
+GEMINI_MODEL = "gemini-4-hydrogen"
+GEMINI_FALLBACK_MODEL = "gemini-3.8-flash"
 
 # Freshness window: a video only counts as "today's" if it was published within
 # this many hours of the run. This prevents grabbing a previous day's video and

@@ -8,7 +8,7 @@ from typing import Optional
 from google import genai
 from google.genai import errors, types
 
-from config import GEMINI_API_KEY, GEMINI_MODEL
+from config import GEMINI_API_KEY, GEMINI_FALLBACK_MODEL, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -148,8 +148,8 @@ def summarize_with_gemini(
 
     user_message = "\n".join(parts)
 
-    # google-genai 3 defaults to v1, which rejects system instructions for
-    # this model. Keep the endpoint explicit across SDK upgrades. The retry
+    # google-genai 3 defaults to v1, which has rejected system instructions
+    # for these models. Keep the endpoint explicit across SDK upgrades. The retry
     # policy below owns retries so SDK retries cannot multiply quota usage.
     client = genai.Client(
         api_key=GEMINI_API_KEY,
@@ -159,19 +159,26 @@ def summarize_with_gemini(
         ),
     )
     last_exc: Optional[Exception] = None
+    model = GEMINI_MODEL
+    delays = [0] + _RETRY_DELAYS
+    attempt = 0
+    switched_to_fallback = False
 
-    for attempt, delay in enumerate([0] + _RETRY_DELAYS):
-        if delay:
+    while attempt < len(delays):
+        delay = delays[attempt]
+        # A fallback switch resends the same request immediately.
+        if delay and not switched_to_fallback:
             logger.info(
                 "Retrying Gemini for %s (attempt %d) after %ds", channel_name, attempt + 1, delay
             )
             time.sleep(delay)
+        switched_to_fallback = False
         # Escalate the prompt on every retry so we don't just re-trigger the same
         # refusal/empty output.
         contents = user_message if attempt == 0 else user_message + _ESCALATION
         try:
             response = client.models.generate_content(
-                model=GEMINI_MODEL,
+                model=model,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -181,24 +188,38 @@ def summarize_with_gemini(
             text = (response.text or "").strip()
         except Exception as exc:  # noqa: BLE001 — SDK raises many transient error types
             last_exc = exc
-            logger.warning("Gemini attempt %d failed for %s: %s", attempt + 1, channel_name, exc)
+            logger.warning(
+                "Gemini attempt %d (%s) failed for %s: %s", attempt + 1, model, channel_name, exc
+            )
             reason = _non_retryable_reason(exc)
             if reason:
+                if model != GEMINI_FALLBACK_MODEL:
+                    # Permanent for this model only: hand the same request to
+                    # the fallback once. A fallback failure still ends the loop.
+                    logger.warning(
+                        "Gemini model %s unusable (%s); falling back to %s",
+                        model, reason, GEMINI_FALLBACK_MODEL,
+                    )
+                    model = GEMINI_FALLBACK_MODEL
+                    switched_to_fallback = True
+                    continue
                 return {
                     "picks": [],
                     "no_picks": False,
                     "degraded": reason,
                     "retryable": False,
                 }
+            attempt += 1
             continue
 
         summary = _parse_picks_json(text)
         if summary is not None:
             return summary
         logger.warning(
-            "Gemini attempt %d for %s produced broken/unparseable output, will retry",
-            attempt + 1, channel_name,
+            "Gemini attempt %d (%s) for %s produced broken/unparseable output, will retry",
+            attempt + 1, model, channel_name,
         )
+        attempt += 1
 
     logger.error("Gemini unusable for %s after retries: %s", channel_name, last_exc)
     return {
